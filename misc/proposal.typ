@@ -8,13 +8,23 @@
 ]
 
 #align(center)[
-  = *Teaspoon*: A theorem prover embedded in typescript
+  = *Teaspoon*: A theorem prover for TypeScript
   Nicola Gannon
 ]
 
 == Background
 
-Web interactivity is getting harder and now it's being used everywhere. Even in vscode there is web technologies, and along with it, JavaScript. Dealing with dynamic typing is kind of a bitch, so they made TypeScript which is a superset of JavaScript with static types. Over time, it has become more complicated and you can do increasingly complex things with it. That being said, it lacks many features of the more academic functional programming side of things. Let's see if we can extend the types to their logical extreme and embed an entire goddamn theorem prover inside typescript!
+Web technologies have become increasingly contagious. Serious applications have moved online; why write the same business logic for three different platforms? Node.js and Electron have allowed web technologies to break containment from the browser and incubate in host operating systems.
+
+// Something stupid about how the web is a virus
+
+ technologies are even being used offline. VSCode, which this document is being written in, is one such example.
+
+JavaScript, the language of the web, is a dynamically typed language; variable types are not tracked when the program is being written. It is therefore the programmer's responsibility to ensure that she provides the correct datatypes to the code that she uses. It seems obvious enough, but code made by third parties is often opaque. In absence of complete, detailed documentation, third party code becomes a mess of trial and error. Proponents of dynamic typing extoll the flexibility of such code. If we're so strict about our input, we may be cutting off _"useful"_ possibilities we never imagined. If it looks like a duck, quacks like a duck, why not treat it as a duck, even if it's a dog?
+
+Static typing constrains the program execution space and generally makes it easier for the programmer to reason about her code. It accomplishes this by making explicit the types of all variables and values. All manner of type errors or type confusion (such as accidental coercions to strings) is effectively eradicated by static typing. TypeScript extends JavaScript to provide this capability and everything is great.
+
+That being said, it lacks many features of the more academic functional programming side of things. Let's see if we can extend the types to their logical extreme and embed an entire goddamn theorem prover inside typescript!
 
 There is history of extending a type system. Liquid types for haskell add a predicate to types https://goto.ucsd.edu/~rjhala/liquid/liquid_types.pdf, and are essentially just refinement types. My very own idea actually has a previous implementation called PeanoScript. This implementation doesn't have a formal type theory and is just based off of vibes and first order logic. So that's a great starting point, I intend to take a lot of pointers on syntax design and proof terms from PeanoScript.
 
@@ -31,7 +41,42 @@ Providing some formal grounding with the calculus of constructions would be awes
 
 // What ideas am I borrowing from
 
-== Overview
+Teaspoon will extend a subset of TypeScript and make propositions first class, adding Liquid Types /* also known as subtypes in lean */ by accident.
+
+=== Syntax Extensions
+
+JavaScript's notion of equality makes things complicated.
+
+```js
+[] === [] // false
+```
+
+Therefore I will be adding a new `@=` definitional equality operator. There will be no such operator emitted in JavaScript, and it's purely for structural equality whatever that means.
+
+JavaScript has a `with` keyword which is largely unused, so that will become the tactic mode.
+
+Function type syntax is somewhat cumbersome in typescript.
+
+```ts
+type fn = (_: number) => number;
+```
+
+I will add a new type constructor;
+
+```ts
+type fn = number -> number;
+```
+
+Additionally, all declarations will be extended:
+
+Types will be made first-class citizens within a typing universe.
+
+```ts
+const x<a> = e
+const x = (infer a: Type) => e
+```
+
+To have tactics, lean's `by` will be `with`.
 
 - Parse a typescript-like language
   - Support most types of typescript subtyping
@@ -56,28 +101,27 @@ type foo<a extends type<_>> = a<int>
 
 #pagebreak()
 
-== Validating a JSON String
+== Validating a Natural Number
 
 #table(columns: (auto, auto), stroke: none, inset: 1em)[
   ```ts
 
-  function assertEven(n: number) {
-    if (n % 2 === 1)
-      throw new Error()
+
+  function assertNat(n: number) {
+    if (!Number.isInteger(n) || n < 0)
+      throw new Error
   }
   ```
 ][
   ```ts
-  declare const even<α extends number>: α → boolean;
-  function assertEven(n: number): even<n> {
-    if (n % 2 === 1)
-      throw new Error()
-    else
-      sorry
+  const isNat: number -> boolean =
+    n => Number.isInteger(n) && n > 0
+  function assertNat(n: number): isNat(n) @= true {
+    if (isNat(n))
+      throw new Error
   }
   ```
 ]
-
 
 We'd like to return a proof that for all subsequent `JSON.parse(s)`, there won't be an error.
 Now I don't really want to write a whole program logic to properly verify this. We're just trying to extend typescript types to be a little more useful.
