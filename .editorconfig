@@ -1,0 +1,18 @@
+root = true
+
+[*]
+tab_width = 3
+indent_size = 3
+end_of_line = lf
+indent_style = space
+insert_final_newline = true
+
+[*.typ]
+tab_width = 2
+indent_size = 2
+
+[*.lean]
+indent_size = 4
+
+[Makefile]
+indent_style = tab
