@@ -1,0 +1,36 @@
+peanoscript:
+  type: Web
+  title: "PeanoScript: TypeScript but it's a theorem prover"
+  author: Grzymek, Michal J.
+
+cock:
+  type: Article
+  title: The calculus of constructions
+  author:
+    - Cocqand, Thierry
+    - Huet, Gérard
+  date:
+    month: 2
+    year: 1988
+  doi: 10.1016/0890-5401(88)90005-3.
+  page: 95–120
+  journal: Information and Computation
+  vol: 76
+  "no": 2-3
+
+liquid:
+  type: Article
+  title: Liquid Types
+  author:
+    - Rondon, Patrick M.
+    - Kawaguchi, Ming
+    - Jhala, Ranjit
+  url: https://goto.ucsd.edu/~rjhala/liquid/liquid_types.pdf
+
+reddit:
+  type: Web
+  title: "I made PeanoScript, a TypeScript-like theorem prover"
+  author:
+    - Grzymek, Michal J.
+    - Anonymous
+  url: https://www.reddit.com/r/ProgrammingLanguages/comments/1jfxjn3/i_made_peanoscript_a_typescriptlike_theorem_prover/
