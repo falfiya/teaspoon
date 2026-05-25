@@ -29,7 +29,7 @@ TypeScript is able to accommodate the dynamic nature of JavaScript well, but bas
 
 == Language Support
 
-Within the features I decide to support, I aim to be a mostly-compatible semi-strict superset of TypeScript. I have personally experienced some type tunsoundness using the compiler. I intend to have strong foundations but still remain faithful to the spirit of TypeScript.
+Within the features I decide to support, I aim to be a mostly-compatible semi-strict superset of TypeScript. I have personally experienced some type unsoundness using the compiler. I intend to have strong foundations but still remain faithful to the spirit of TypeScript.
 
 #let inset = (top: 0em, left: 0em, right: 1em, bottom: 0em)
 
@@ -80,9 +80,9 @@ Within the features I decide to support, I aim to be a mostly-compatible semi-st
 
 #table(columns: (40%, auto, auto), stroke: none, inset: inset)[
   #table(columns: (auto, auto), stroke: none, inset: 0pt)[
-    Propositional Equality \
-    Structural Equality \
-    Tactic mode \
+    - Propositional Equality
+    - Structural Equality
+    - Tactic mode
   ][
     #hide(" ") `  a @== b : Prop`\
     #hide(" ") `  [] @= []`\

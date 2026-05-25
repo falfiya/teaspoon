@@ -25,6 +25,16 @@ fn main() {
             for t in tokens {
                println!("  {:?} at {:?}", t.inner, t.span);
             }
+            let q = tokens.split_spanned((0..input.len()).into());
+            let res2 = parser::pre_statement().parse(q);
+            match res2.output() {
+               Some(exprs) => {
+                  println!("  {:?}", exprs);
+               },
+               None => {
+                  println!("No dice")
+               }
+            }
          }
          None => {
             for err in res.errors() {
