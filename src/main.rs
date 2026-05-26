@@ -1,3 +1,5 @@
+#![feature(impl_trait_in_bindings)]
+
 use chumsky::prelude::*;
 
 mod parser;
@@ -26,7 +28,7 @@ fn main() {
                println!("  {:?} at {:?}", t.inner, t.span);
             }
             let q = tokens.split_spanned((0..input.len()).into());
-            let res2 = parser::pre_statement().parse(q);
+            let res2 = parser::pre_statements().parse(q);
             match res2.output() {
                Some(exprs) => {
                   println!("  {:?}", exprs);
