@@ -21,7 +21,7 @@ fn main() {
          continue;
       }
 
-      let res = parser::tokenize().parse(input);
+      let res = parser::lex().parse(input);
       match res.output() {
          Some(tokens) => {
             for t in tokens {
@@ -31,16 +31,16 @@ fn main() {
             let res2 = parser::pre_statements().parse(q);
             match res2.output() {
                Some(exprs) => {
-                  println!("  {:?}", exprs);
+                  println!("  {:#?}", exprs);
                },
                None => {
-                  println!("No dice")
+                  println!("  Parse Error")
                }
             }
          }
          None => {
             for err in res.errors() {
-               println!("  Error: {:?}", err);
+               println!("  Token Error: {:?}", err);
             }
          }
       }

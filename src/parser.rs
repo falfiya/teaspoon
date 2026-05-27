@@ -6,23 +6,26 @@ use chumsky::pratt::*;
 pub type Span = SimpleSpan;
 pub type EError<'src, T> = extra::Err<Rich<'src, T, Span>>;
 
+/// Box of spanned.
+pub type Sox<T> = Box<Spanned<T>>;
+
+// pub type SVec<T> = Spanned<Vec<Spanned<T>>>;
+pub type SVec<T> = Vec<Spanned<T>>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Token<'src> {
    // keywords
-   Let,
-   Infer,
-   Extends,
-   Check,
-   Eval,
-   If,
-   Else,
+   Let, Check, Eval,
+   Infer, Extends,
+   If, Else,
+   Underscore,
+
    Sorry,
    Sort,
    Type,
    Prop,
    TyTrue,
    TyFalse,
-   Underscore,
 
    ParenL,
    ParenR,
@@ -55,7 +58,7 @@ pub enum Token<'src> {
    String(&'src str),
 }
 
-pub fn tokenize<'src>() -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>>> {
+pub fn lex<'src>() -> impl Parser<'src, &'src str, SVec<Token<'src>>> {
    use Token::*;
    let kw = choice((
       just("let").to(Let),
@@ -106,10 +109,7 @@ pub fn tokenize<'src>() -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>
    .collect()
 }
 
-// Spanned box.
-pub type Sox<T> = Box<Spanned<T>>;
-// pub type SVec<T> = Spanned<Vec<Spanned<T>>>;
-pub type SVec<T> = Vec<Spanned<T>>;
+
 pub type PPreExpr<'src> = Sox<PreExpr<'src>>;
 pub type PPreStatement<'src> = Sox<PreStatement<'src>>;
 pub type VPreStatement<'src> = SVec<PreStatement<'src>>;
@@ -173,7 +173,7 @@ pub enum PreExpr<'src> {
    Metavariable(&'src str),
    Ident(&'src str),
    Unary(Unary, PPreExpr<'src>),
-   App(PPreExpr<'src>, Vec<Spanned<PreExpr<'src>>>),
+   Call(PPreExpr<'src>, Vec<Spanned<PreExpr<'src>>>),
    BinOp {
       op: BinOp,
       left: PPreExpr<'src>,
@@ -201,6 +201,7 @@ pub enum PreStatement<'src> {
       then: VPreStatement<'src>,
       elze: Option<VPreStatement<'src>>,
    },
+   Expr(PPreExpr<'src>),
 }
 
 pub fn pre_statements<'tokens, 'src: 'tokens>() ->
@@ -213,13 +214,15 @@ pub fn pre_statements<'tokens, 'src: 'tokens>() ->
 {
    let mut stmt = Recursive::declare();
    let mut expr = Recursive::declare();
+   let ident_bind = select! {
+      Token::Word(w) if !DISALLOWED_IDENT.contains(&w) => w,
+   }.labelled("bound variable");
    let stmts = stmt.clone().separated_by(just(Token::Semi)).allow_trailing().collect();
    let ascription = just(Token::Colon).ignore_then(expr.clone()).map(Box::new);
-   let ident_ = select! {Token::Word(w) => w}.filter(|w| !DISALLOWED_IDENT.contains(&w));
    {
       use PreStatement::*;
-      let defn = just(Token::Let)
-         .ignore_then(ident_)
+      let def = just(Token::Let)
+         .ignore_then(ident_bind)
          .then(ascription.clone().or_not())
          .then_ignore(just(Token::Eq))
          .then(expr.clone())
@@ -240,13 +243,15 @@ pub fn pre_statements<'tokens, 'src: 'tokens>() ->
          .map(Box::new)
          .map(Eval);
 
-      stmt.define(choice((defn, check, eval)).spanned());
+      let raw_expr = expr.clone().map(Box::new).map(Expr);
+
+      stmt.define(choice((def, check, eval, raw_expr)).spanned());
    }
 
    {
       use Token::*;
       use Prim::*;
-      let keywords = select! {
+      let special_ident = select! {
          Sorry => PreExpr::Sorry,
          Sort => PreExpr::Sort,
          Type => PreExpr::Type,
@@ -258,8 +263,13 @@ pub fn pre_statements<'tokens, 'src: 'tokens>() ->
          Word("false") => PreExpr::Prim(False),
       };
 
-      let metavariable = just(Question).ignore_then(ident_).map(PreExpr::Metavariable);
-      let ident = ident_.map(PreExpr::Ident);
+      let metavariable = just(Question).ignore_then(
+         select! {Token::Word(w) => PreExpr::Metavariable(w)})
+         .labelled("metavariable");
+
+      let ident =
+         select! {Token::Word(w) => PreExpr::Ident(w)}
+         .labelled("identifier");
 
       let num = select! { Number(s) => s }.validate(|s, e, emit| {
          if let Ok(n) = s.parse::<u64>() {
@@ -276,20 +286,22 @@ pub fn pre_statements<'tokens, 'src: 'tokens>() ->
 
          emit.emit(Rich::custom(e.span(), format!("Invalid number format: '{}'", s)));
          PreExpr::Error
-      });
+      }).labelled("number");
 
       let param_anon = just(Underscore)
          .ignore_then(just(Colon))
          .ignore_then(expr.clone())
-         .map(|e| PreParam::Type(Box::new(e)));
-      let param_nom = ident_
+         .map(Box::new)
+         .map(PreParam::Type);
+
+      let param_nom = ident_bind.clone()
          .then(ascription.or_not())
          .map(|(name, ty)| match ty {
             None => PreParam::Name(name),
             Some(ty) => PreParam::Full { name, ty }
          });
 
-      let single_anon = ident_.map(|p| vec![PreParam::Name(p)]);
+      let single_anon = ident_bind.clone().map(|p| vec![PreParam::Name(p)]);
 
       let params = param_nom.or(param_anon)
          .separated_by(just(Comma))
@@ -297,72 +309,69 @@ pub fn pre_statements<'tokens, 'src: 'tokens>() ->
          .collect()
          .delimited_by(just(ParenL), just(ParenR));
 
-      let lam = just(Infer).or_not().map(|o| o.is_some())
-         .then(single_anon.or(params))
-         .then_ignore(just(Arrow))
-         .then(stmts.clone().delimited_by(just(BraceL), just(BraceR)))
-         .map(|((implicit, params), body)| PreExpr::Lam {implicit, params, body});
+      let braced_body = stmts.clone()
+         .delimited_by(just(BraceL), just(BraceR))
+         .map(PreLamBody::Block);
+      let expr_body = expr.clone().map(Box::new).map(PreLamBody::Return);
+
+      let sub_expr = expr.clone()
+         .delimited_by(just(ParenL), just(ParenR));
+
+      let atom = choice((
+         special_ident.spanned(),
+         sub_expr,
+         metavariable.spanned(),
+         ident.spanned(),
+         num.spanned(),
+      ));
 
       let args = expr.clone()
          .separated_by(just(Comma))
          .allow_trailing()
          .collect()
-         .delimited_by(just(ParenL), just(ParenR));
+         .delimited_by(just(ParenL), just(ParenR))
+         .labelled("function args");
 
       // foo(bar, baz)
-      let apply = expr.clone()
-         .then(args)
-         .map(|(func, args)| PreExpr::App(Box::new(func), args));
+      let apply = atom
+         .foldl_with(args.repeated(), |f, args, e|
+            PreExpr::Call(Box::new(f), args).with_span(e.span()));
 
-      let atom = choice((
-         keywords,
-         lam,
-         metavariable,
-         ident,
-         num,
-         apply,
-      )).spanned();
+      let nl_expr = apply.pratt((
+         // +x -x !x
+         prefix(1,
+            select!{Plus => Unary::Plus, Minus => Unary::Minus, Bang => Unary::Not},
+            |o, x, e| PreExpr::Unary(o, Box::new(x)).with_span(e.span())),
+         infix(left(2),
+            select!{
+               Plus => BinOp::Plus,
+               Minus => BinOp::Minus,
+            },
+            |l, o, r, e| PreExpr::BinOp{
+               op: o,
+               left: Box::new(l),
+               right: Box::new(r)
+            }.with_span(e.span())
+         ),
+         infix(left(3),
+            select!{Asterisk => BinOp::Plus, Minus => BinOp::Minus},
+            |l, o, r, e| PreExpr::BinOp{
+               op: o,
+               left: Box::new(l),
+               right: Box::new(r)
+            }.with_span(e.span())
+         ),
+      ));
 
-      expr.define(
-         atom.pratt((
-            // +x -x !x
-            prefix(1,
-               select!{Plus => Unary::Plus, Minus => Unary::Minus, Bang => Unary::Not},
-               |o, x, e| PreExpr::Unary(o, Box::new(x)).with_span(e.span())),
-            infix(left(2),
-               select!{Plus => BinOp::Plus, Minus => BinOp::Minus},
-               |l, o, r, e| PreExpr::BinOp{
-                  op: o,
-                  left: Box::new(l),
-                  right: Box::new(r)
-               }.with_span(e.span())
-            ),
-            infix(left(3),
-               select!{Asterisk => BinOp::Plus, Minus => BinOp::Minus},
-               |l, o, r, e| PreExpr::BinOp{
-                  op: o,
-                  left: Box::new(l),
-                  right: Box::new(r)
-               }.with_span(e.span())
-            ),
-         ))
-      )
+      let lam = just(Infer).or_not().map(|o| o.is_some())
+         .then(single_anon.or(params))
+         .then_ignore(just(Arrow))
+         .then(braced_body.or(expr_body))
+         .map(|((implicit, params), body)| PreExpr::Lam {implicit, params, body})
+         .spanned();
+
+      expr.define(lam.or(nl_expr))
    }
 
    stmts
 }
-
-// pub struct FVarId(u64);
-// pub struct BVarId(u64);
-// pub struct MVarId(u64);
-// pub struct Level(u8);
-
-// pub enum Expr<'a> {
-//    Sort(u16),
-
-//    FVar(FVarId),
-//    BVar(BVarId),
-//    Const { name: &'a str },
-
-//    Lam { params: Vec<Expr<'a>> },
-// }
