@@ -1,10 +1,37 @@
 #![feature(impl_trait_in_bindings)]
+#![feature(coroutines, coroutine_trait, stmt_expr_attributes)]
+
+use core::time;
+use std::ops::{Coroutine, CoroutineState};
+use std::pin::Pin;
+use std::thread::sleep;
 
 use chumsky::prelude::*;
 
 mod parser;
+mod elab;
 
 fn main() {
+   let mut coroutine = #[coroutine]
+   || {
+      yield 1;
+      yield 2;
+      yield 3;
+      return "foo";
+   };
+
+   loop {
+      sleep(time::Duration::from_secs(1));
+      match Pin::new(&mut coroutine).resume(()) {
+         CoroutineState::Yielded(x) => println!("Yielded {}", x),
+         CoroutineState::Complete(x) => {
+            println!("Completed with {}", x);
+            break;
+         }
+      }
+
+   }
+   /*
    loop {
       print!("> ");
       std::io::Write::flush(&mut std::io::stdout()).unwrap();
@@ -32,7 +59,7 @@ fn main() {
             match res2.output() {
                Some(exprs) => {
                   println!("  {:#?}", exprs);
-               },
+               }
                None => {
                   println!("  Parse Error")
                }
@@ -45,4 +72,6 @@ fn main() {
          }
       }
    }
+   */
 }
+

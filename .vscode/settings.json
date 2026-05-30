@@ -2,4 +2,7 @@
    "files.associations": {
       "*.tsp": "typescript"
    },
+   "cSpell.words": [
+      "elab"
+   ],
 }

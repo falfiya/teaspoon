@@ -6,19 +6,17 @@ use chumsky::pratt::*;
 pub type Span = SimpleSpan;
 pub type EError<'src, T> = extra::Err<Rich<'src, T, Span>>;
 
-/// Box of spanned.
-pub type Sox<T> = Box<Spanned<T>>;
-
-// pub type SVec<T> = Spanned<Vec<Spanned<T>>>;
-pub type SVec<T> = Vec<Spanned<T>>;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Token<'src> {
-   // keywords
-   Let, Check, Eval,
-   Infer, Extends,
+   // Statements
+   Let, Const,
    If, Else,
-   Underscore,
+   Loop,
+   Check, Eval,
+
+   // Keywords
+   Infer, Extends,
+   Underscore, As,
 
    Sorry,
    Sort,
@@ -27,6 +25,7 @@ pub enum Token<'src> {
    TyTrue,
    TyFalse,
 
+   // Punctuation
    ParenL,
    ParenR,
    BracketL,
@@ -62,9 +61,12 @@ pub fn lex<'src>() -> impl Parser<'src, &'src str, SVec<Token<'src>>> {
    use Token::*;
    let kw = choice((
       just("let").to(Let),
+      just("const").to(Const),
+      just("loop").to(Loop),
       just("#check").to(Check),
       just("#eval").to(Eval),
       just("sorry").to(Sorry),
+      just("as").to(As),
       just("Sort").to(Sort),
       just("Prop").to(Prop),
       just("Type").to(Type),
@@ -110,9 +112,9 @@ pub fn lex<'src>() -> impl Parser<'src, &'src str, SVec<Token<'src>>> {
 }
 
 
-pub type PPreExpr<'src> = Sox<PreExpr<'src>>;
-pub type PPreStatement<'src> = Sox<PreStatement<'src>>;
-pub type VPreStatement<'src> = SVec<PreStatement<'src>>;
+pub type PPreExpr<'src> = Box<Spanned<PreExpr<'src>>>;
+pub type PPreStatement<'src> = Box<Spanned<PreStatement<'src>>>;
+pub type PreBlock<'src> = Vec<Spanned<PreStatement<'src>>>;
 
 #[derive(Clone, Debug)]
 pub enum PreParam<'src> {
@@ -130,6 +132,7 @@ pub enum BinOp {
    AtEqEq,
    EqEqEq,
    Subtype,
+   Cast,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -157,7 +160,7 @@ static DISALLOWED_IDENT: &[&'static str] = &[
 #[derive(Clone, Debug)]
 pub enum PreLamBody<'src> {
    Return(PPreExpr<'src>),
-   Block(VPreStatement<'src>),
+   Block(PreBlock<'src>),
 }
 
 #[derive(Clone, Debug)]
@@ -189,7 +192,12 @@ pub enum PreExpr<'src> {
 #[derive(Clone, Debug)]
 pub enum PreStatement<'src> {
    Error,
-   Definition {
+   Let {
+      name: &'src str,
+      ty: Option<PPreExpr<'src>>,
+      val: Option<PPreExpr<'src>>,
+   },
+   Const {
       name: &'src str,
       ty: Option<PPreExpr<'src>>,
       val: PPreExpr<'src>,
@@ -198,17 +206,18 @@ pub enum PreStatement<'src> {
    Eval(PPreExpr<'src>),
    If {
       cond: PPreExpr<'src>,
-      then: VPreStatement<'src>,
-      elze: Option<VPreStatement<'src>>,
+      then: PreBlock<'src>,
+      elze: Option<PreBlock<'src>>,
    },
+   Loop(PreBlock<'src>),
    Expr(PPreExpr<'src>),
 }
 
-pub fn pre_statements<'tokens, 'src: 'tokens>() ->
+pub fn pre_block<'tokens, 'src: 'tokens>() ->
    impl Parser<
       'tokens,
       MappedInput<'tokens, Token<'src>, Span, &'tokens [Spanned<Token<'src>>]>,
-      VPreStatement<'src>,
+      PreBlock<'src>,
       EError<'tokens, Token<'src>>,
    > + Clone
 {
@@ -338,11 +347,20 @@ pub fn pre_statements<'tokens, 'src: 'tokens>() ->
             PreExpr::Call(Box::new(f), args).with_span(e.span()));
 
       let nl_expr = apply.pratt((
+         // x as number
+         infix(left(1),
+            just(As).map(|_| BinOp::Cast),
+            |l, o, r, e| PreExpr::BinOp {
+               op, o,
+               left: Box::new(l),
+               right: Box::new(r),
+            }.with_span(e.span())
+         ),
          // +x -x !x
-         prefix(1,
+         prefix(2,
             select!{Plus => Unary::Plus, Minus => Unary::Minus, Bang => Unary::Not},
             |o, x, e| PreExpr::Unary(o, Box::new(x)).with_span(e.span())),
-         infix(left(2),
+         infix(left(3),
             select!{
                Plus => BinOp::Plus,
                Minus => BinOp::Minus,
@@ -353,7 +371,7 @@ pub fn pre_statements<'tokens, 'src: 'tokens>() ->
                right: Box::new(r)
             }.with_span(e.span())
          ),
-         infix(left(3),
+         infix(left(10),
             select!{Asterisk => BinOp::Plus, Minus => BinOp::Minus},
             |l, o, r, e| PreExpr::BinOp{
                op: o,
