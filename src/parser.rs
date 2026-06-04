@@ -131,7 +131,8 @@ pub enum BinOp {
    Divide,
    AtEqEq,
    EqEqEq,
-   Subtype,
+   SubType,
+   HasType,
    Cast,
 }
 

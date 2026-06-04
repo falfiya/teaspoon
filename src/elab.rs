@@ -1,10 +1,10 @@
 // Locally nameless representation of lambda calculus.
-use im::{HashMap, HashSet, Vector};
+use im::{HashMap, HashSet, Vector, vector};
 use std::{ops::Coroutine};
 
-use chumsky::{extra::State, span::{SpanWrap, Spanned}};
+use chumsky::{extra::State, span::SpanWrap};
 
-use crate::parser::{PPreStatement, PreStatement};
+use crate::parser::{self, BinOp, PreExpr};
 
 #[derive(Clone, Debug)]
 pub struct MVarId(u32);
@@ -17,13 +17,6 @@ pub struct BVarId(u32);
 pub struct Fresh {
    mvar_max: MVarId,
    fvar_max: FVarId,
-}
-
-pub trait Contextualized<'src, T> {
-   fn named() -> HashMap<BVarId, Spanned<Expr<'src>>>;
-   /// Lean's †
-   fn unnamed() -> HashMap<Spanned<String>, Spanned<Expr<'src>>>;
-   fn constraints() -> Vector<Spanned<Expr<'src>>>;
 }
 
 /// Constraints on the type
@@ -94,36 +87,115 @@ pub struct CtExpr<'src> {
    expr: Expr<'src>,
 }
 
-pub enum Prop<'src> {
-   
-}
-
 pub enum Uni {
    Level(u16),
    Succ(Uni),
    Max(Uni, Uni),
 }
 
+pub enum BinderInfo {
+   Default,
+   Implicit,
+}
+
+pub enum Name<'src> {
+   Anon,
+   Str(&'src str),
+   Num{
+      pre: Box<Name<'src>>,
+      i: u32,
+   },
+}
+
+pub struct Param<'src> {
+   name: Name<'src>,
+   ty: Expr<'src>,
+}
+
 #[derive(Debug, Clone)]
 pub enum Expr<'src> {
-   Sort(Uni),
+   Sort(u32),
 
+   Const{name: Name<'src>},
    /// Maybe add something in the future to optimize constant FVars
    FVar(FVarId),
+   /// Bound variables, De Bruijn Style
+   ///
+   /// ```ts
+   /// a => a;
+   /// ```
+   /// ```rs
+   /// Lam {
+   ///   ty: Pi {
+   ///      infer: true,
+   ///      params: vec![param::Implicit(Expr::Sort(1))],  // <----------------<
+   ///      returns: Pi {                                  //                  |
+   ///         infer: false,                               //                  |
+   ///         params: vec![param::Explicit("a", BVar(0))] // -----------------^
+   ///         returns: BVar(0)
+   ///      }
+   /// }}
+   /// ```
    BVar(BVarId),
    MVar(MVarId),
-
    Pi {
-      
+      info: BinderInfo,
+      params: Vec<Param<'src>>,
+      body: Expr<'src>,
    },
-   Abs {
-      ty: PExpr<'src>,
-      body: Contextualized<'src, Block>,
+   Lam {
+      info: BinderInfo,
+      params: Vec<Param<'src>>,
+      body: Block<'src>,
    },
    Cast {
-      expr: PExpr<'src>,
-      ty: PExpr<'src>,
+      expr: Expr<'src>,
+      ty: Expr<'src>,
    },
+   Binary {
+      op: BinOp,
+      left: Expr<'src>,
+      right: Expr<'src>,
+   }
+}
+
+#[test]
+fn test_elab_identity() {
+   let identity;
+   {
+      use parser::*;
+      use PreExpr::*;
+      identity = Lam {
+         implicit: false,
+         params: vec![parser::PreParam::Name("a")],
+         body: PreLamBody::Return(Ident("a").with_span(0..1)),
+      };
+   }
+
+   let identity_elab;
+   {
+      use Expr::*;
+      identity_elab = Lam {
+         info: BinderInfo::Implicit,
+         params: vec![Param {name: Name::Anon, ty: Sort(0)}],
+         body: vec![
+            Statement::Return(
+               Lam {
+                  info: BinderInfo::Default,
+                  params: vec![Param {name: Name::Str("a"), ty: BVar(BVarId(0))}],
+                  body: vec![
+                     Statement::Return(
+                        BVar(BVarId(0))
+                     )
+                  ],
+               }
+            )
+         ],
+      };
+      identity_constraints = vec![];
+   }
+
+   identity.elab()
 }
 
 impl Fresh {
@@ -143,28 +215,34 @@ trait Elab<'src, R>: Clone {
    fn elab(self: &Self, ctx: Context<'src>) -> R;
 }
 
-type Block<'src> = Vec<Spanned<Statement<'src>>>;
+type Block<'src> = Vec<Statement<'src>>;
 
 pub enum Statement<'src> {
    Const {
-      name: ConstId,
-      ty: PExpr<'src>,
-      val: PExpr<'src>,
+      name: &'src str,
+      ty: Box<Expr<'src>>,
+      val: Box<Expr<'src>>,
    },
    Let {
       name: &'src str,
-      val: PExpr<'src>,
-      ty: PExpr<'src>,
+      ty: Expr<'src>,
+      val: Option<Box<Expr<'src>>>,
    },
    If {
-      cond: PExpr<'src>,
-      then: Block<'src>,
-      elze: Block<'src>,
+      cond: Box<Expr<'src>>,
+      then: Box<Expr<'src>>,
+      elze: Box<Expr<'src>>,
    },
-   Assign {
-      name: &'src str,
-      val: PExpr<'src>,
+   AssignFVar {
+      name: FVarId,
+      val: Box<Expr<'src>>,
    },
+   AssignBVar {
+      name: BVarId,
+      val: Box<Expr<'src>>,
+   },
+   Return(Expr<'src>),
+
    Expr(Expr<'src>),
    Check(Expr<'src>),
    Eval(Expr<'src>),
