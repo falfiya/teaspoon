@@ -39,9 +39,9 @@
         Or[
             `if (` $e$ `) {` $s$`;`$*$ `}`\
             `else    {` $s$`;`$*$ `}`][if else]
-        Or[`loop {` $s$`;`$*$ `}`][loop]
+        Or[`loop {` $s$`;`$*$ `}`][]
         Or[`break`][break innermost loop]
-        Or[`return`][pretty self explanatory]
+        Or[`return`][]
         Or[`#check` e][check type]
         Or[`#eval`][application]
       },
@@ -96,7 +96,7 @@
         Or[$φ$][proposition]
         Or[$e$][singleton type]
         Or[`typeof` $e$][]
-        Or[`infer`$?$ $P$ `->` $τ$][π-type]
+        Or[`infer`$?$ $P$ `-> `$τ$][π-type]
         Or[$τ$`[]`][array type]
         Or[`[`$V$`;`$*$`]`][named tuple]
       },
@@ -110,6 +110,7 @@
         Or[`False`][]
         Or[`e₁ @== e₂`][equality]
         Or[`infer`$?$ $P$ `->` $φ$][forall]
+        Or[$τ₁$` extends `$τ₂$][subtype relation]
       },
     ),
 
@@ -135,3 +136,13 @@
   [Premise 3],
   [Conclusion],
 ))
+
+== The difficulties of mutable variables
+
+With mutable variables something something something.
+
+Have to forget proofs about what they are, and widen to what they can be.
+
+With constants, all new information you learn stays with you.
+
+There's something similar about how you can't "keep" information between function calls.

@@ -10,3 +10,5 @@ if (Math.random() > 0.5) {
 
 declare function takesFive(x: 5);
 const id5 = a => {takesFive(a); return a};
+let x: readonly number[] = [];
+x = [];
