@@ -38,7 +38,7 @@
         Or[`if (` $e$ `) {` $s$`;`$*$ `}`][if]
         Or[
             `if (` $e$ `) {` $s$`;`$*$ `}`\
-            `else    {` $s$`;`$*$ `}`][if else]
+            `else    `#h(1.2pt)`{` $s$`;`$*$ `}`][if else]
         Or[`loop {` $s$`;`$*$ `}`][]
         Or[`break`][break innermost loop]
         Or[`return`][]
@@ -68,7 +68,7 @@
   ),
   bnf(
     Prod(
-      $V$,
+      $v_τ$,
       delim: $→$,
       {
         Or[$τ$][]
@@ -77,11 +77,20 @@
     ),
 
     Prod(
-      $P$,
+      $p_τ$,
       delim: $→$,
       {
         Or[$τ$][]
-        Or[`(`$V$`,`$*$`)`][]
+        Or[`(`$v_τ$`,`$*$`)`][]
+      }
+    ),
+
+    Prod(
+      $v_l$,
+      delim: $→$,
+      {
+        Or[$x$][]
+        Or[`(`$x$ `:` $τ$`)`][]
       }
     ),
 
@@ -96,9 +105,10 @@
         Or[$φ$][proposition]
         Or[$e$][singleton type]
         Or[`typeof` $e$][]
-        Or[`infer`$?$ $P$ `-> `$τ$][π-type]
+        Or[`infer`$?$ $p_τ$ `-> `$τ$][π-type]
         Or[$τ$`[]`][array type]
-        Or[`[`$V$`;`$*$`]`][named tuple]
+        Or[`[`$v_τ$`;`$*$`]`][named tuple]
+        Or[`Liquid` $v_l$`, `$φ$][liquid type]
       },
     ),
 
@@ -108,8 +118,10 @@
       {
         Or[`True`][]
         Or[`False`][]
-        Or[`e₁ @== e₂`][equality]
-        Or[`infer`$?$ $P$ `->` $φ$][forall]
+        Or[$e₁$` @== `$e₂$][equality]
+        Or[$e₁$` | `$e₂$][or]
+        Or[$e₁$` & `$e₂$][and]
+        Or[`infer`$?$ $p_τ$ `->` $φ$][forall]
         Or[$τ₁$` extends `$τ₂$][subtype relation]
       },
     ),
@@ -121,6 +133,14 @@
         Or[`with` $t$`;`$*$][tactics]
       }
     ),
+
+    Prod(
+      $"t"$,
+      delim: $→$,
+      {
+        Or[$x$ $e *$][tactic]
+      }
+    )
   )
 )
 
@@ -146,3 +166,7 @@ Have to forget proofs about what they are, and widen to what they can be.
 With constants, all new information you learn stays with you.
 
 There's something similar about how you can't "keep" information between function calls.
+
+== Querying for Type
+
+
