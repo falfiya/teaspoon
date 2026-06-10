@@ -1,3 +1,9 @@
+== Abstract
+
+Static type systems for programming languages provide stronger guarantees of program correctness. Through analysis at compile time, static type systems typically eliminate all runtime type errors and enforce proper usage of APIs. The programmer can even lean on the type system to help her reason about the nature of her data. The benefits of static typing are best showcased in web development. Webpages are programmed in JavaScript, a dynamically typed programming language. But most(1) web developers use TypeScript, a statically typed extension to JavaScript. TypeScript is a compiler-as-specification, which works remarkably well in practice, but a robust theory would prevent soundness bugs. Teaspoon aims to do what TypeScript did for JavaScript. It extends a subset of TypeScript, formally backing it with the usual operational semantics, type inference, and constraint solving. Teaspoon's type system is unusual in its support for mutability and imperative programming. The addition of first-class propositions and liquid types effectively create a dependently typed TypeScript.
+
+(1) https://2025.stateofjs.com/en-US/usage/#js_ts_balance
+
 == Syntax
 
 #import "@preview/simplebnf:0.2.0": *

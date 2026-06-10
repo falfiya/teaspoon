@@ -57,7 +57,7 @@ pub enum Token<'src> {
    String(&'src str),
 }
 
-pub fn lex<'src>() -> impl Parser<'src, &'src str, SVec<Token<'src>>> {
+pub fn lex<'src>() -> impl Parser<'src, &'src str, Vec<Token<'src>>> {
    use Token::*;
    let kw = choice((
       just("let").to(Let),
@@ -240,7 +240,7 @@ pub fn pre_block<'tokens, 'src: 'tokens>() ->
             // It's amusing that the name (&str) has a Span.
             // They're both effectively the same as each other.
             // A Span carries the data in indices whereas the &str is a fat pointer.
-            Definition { name: name, ty, val: Box::new(val) }
+            Let { name: name, ty, val: Box::new(val) }
          });
 
       let check = just(Token::Check)
