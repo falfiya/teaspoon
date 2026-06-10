@@ -205,7 +205,7 @@ pub enum PreStatement<'src> {
       elze: Option<PreBlock<'src>>,
    },
    Loop(PreBlock<'src>),
-   Expr(PPreExpr<'src>),
+   BareExpr(PPreExpr<'src>),
 }
 
 impl <'src, 'a, D, A> Pretty<'a, D, A> for &PreStatement<'src>
@@ -280,7 +280,7 @@ pub fn pre_block<'tokens, 'src: 'tokens>() ->
          .map(Box::new)
          .map(Eval);
 
-      let raw_expr = expr.clone().map(Box::new).map(Expr);
+      let raw_expr = expr.clone().map(Box::new).map(BareExpr);
 
       stmt.define(choice((r#let, r#const, check, eval, raw_expr)).spanned());
    }

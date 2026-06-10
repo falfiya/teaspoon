@@ -203,6 +203,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pub-fields"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70739dfbe1b67f36bda171ad511ea5d6e4b96baf66e7427661345ab072c12c11"
+dependencies = [
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -322,6 +332,7 @@ dependencies = [
  "chumsky",
  "im",
  "pretty",
+ "pub-fields",
 ]
 
 [[package]]

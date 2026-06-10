@@ -5,12 +5,11 @@
 use std::fs;
 
 
+use bumpalo::Bump;
 use chumsky::prelude::{Parser, Input};
 
-mod shared;
 mod parser;
 mod elab;
-mod expr;
 
 use argh::FromArgs;
 
@@ -64,5 +63,8 @@ fn main() {
    println!("Pre-parse:");
    println!("{:#?}", pre_block);
 
-   // let res = elab::elab_expr(pe, al, it_ctx, ty_ctx);
+   let al = Bump::new();
+   let fresh = elab::FreshCtx::new();
+   let ctx = elab::Context::new(&al, &fresh);
+   let res = elab::elab_block(&ctx, pre_block);
 }

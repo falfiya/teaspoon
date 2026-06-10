@@ -1,19 +1,381 @@
-use crate::shared::*;
-
 use bumpalo::Bump;
-use im::{HashMap, Vector, vector};
 use std::collections::HashSet;
 
-use std::fmt::{Debug, Pointer};
-// use std::ops::{Coroutine, Index};
+use crate::parser::{self, PreBlock, PreExpr, PreStatement};
 
-use std::sync::atomic::{AtomicU32};
+impl <'src, 'f> Expr2<'src, 'f> {
+   fn ty(&self) -> (&'f Expr2<'src, 'f>, Constraints<'src, 'f>) {
+      todo!();
+   }
+}
 
-use chumsky::{extra::State, span::SpanWrap};
+pub fn elab_block<'src, 'f>(
+   ctx: &Context<'src, 'f>,
+   pb: &PreBlock<'src>,
+) -> &'f Expr2<'src, 'f>
+{
+   let ctx = ctx.clone();
 
-use crate::expr::{self, Expr};
+   let mut acc_ctx = ctx.clone();
+   let mut const_names = HashSet::new();
+   let mut constraints = Constraints::new();
+   let mut block2: Vec<&'f Statement2<'src, 'f>> = Vec::with_capacity(pb.len());
+   // Elaborate statements in order, building up the context.
+   for ps in pb {
+      let (stmt2, c) = elab_statement(&acc_ctx, ps);
+      constraints.append(c);
+      acc_ctx = stmt2.ctx.clone();
+      block2.push(stmt2);
 
-use crate::parser::{self, PreExpr, PreStatement};
+      match stmt2.stmt {
+         Statement::Return(r) => {
+            return ctx.e2(Expr::Block(block2));
+         }
+         Statement::Const { name, val: _ } => {
+            if const_names.contains(name) {
+               panic!("Cannot reassign {}", name);
+            } else {
+               const_names.insert(name);
+            }
+         }
+         _ => ()
+      }
+   }
+
+   return ctx.e2(Expr::Block(block2));
+}
+
+pub fn elab_statement<'src, 'f>(
+   ctx: &Context<'src, 'f>,
+   ps: &PreStatement<'src>,
+) -> (&'f Statement2<'src, 'f>, Constraints<'src, 'f>)
+{
+   use parser::PreStatement::*;
+   let mut constraints = Constraints::new();
+   match ps {
+      Const { name, ty, val } => {
+         let (val2, c) = elab_expr(&ctx, val);
+         constraints.append(c);
+         let (val2_ty, c) = val2.ty();
+         constraints.append(c);
+
+         // Elaborate or synthesize the type.
+         // Prepare the output context.
+         let ctx_next = ctx.new_fvar(name, val2_ty);
+         match ty {
+            Some(ty) => {
+               let (ty2, c) = elab_expr(&ctx, ty);
+               constraints.append(c);
+               // Enforce that the value extends the explicit type
+               constraints.add(ctx.e2(Expr::Extends { sub: val2_ty, sup: ty2 }));
+            }
+            _ => ()
+         }
+
+         let const2 = ctx_next.s2(Statement::Const { name, val: val2 });
+         return (const2, constraints);
+      },
+      s => todo!("{:?}", s),
+   }
+}
+
+pub fn elab_expr<'src, 'f>(
+   ctx: &Context<'src, 'f>,
+   pe: &PreExpr<'src>,
+) -> (&'f Expr2<'src, 'f>, Constraints<'src, 'f>) {
+   use parser::PreExpr::*;
+   let mut constraints = Constraints::new();
+   match pe {
+      Lam {
+         implicit,
+         params,
+         body,
+      } => {
+         if *implicit {
+            todo!();
+         }
+
+         let mut body_ctx = ctx.clone();
+         let mut prevent_dupe_param_names = HashSet::new();
+         let mut params2: Vec<&'f Param<'src, 'f>> = Vec::with_capacity(params.len());
+         for param in params {
+            use parser::PreParam;
+            match param {
+               PreParam::Name(name) => {
+                  if prevent_dupe_param_names.contains(name) {
+                     panic!("Cannot bind {} a second time!", name)
+                  } else {
+                     prevent_dupe_param_names.insert(name);
+                  }
+
+                  // Create metavariable ?T
+                  let ty2 = body_ctx.e2(body_ctx.id.fresh_mvar());
+                  params2.push(
+                     body_ctx.owns(Param { name: Name::Str(name), ty: ty2.clone() })
+                  );
+                  // Bind name -> #0
+                  body_ctx.id = body_ctx.id.bind_var(name);
+                  // #0 has type ?T
+                  body_ctx.ty = body_ctx.ty.push_fact(body_ctx.e2(Expr::Eq {
+                     left: body_ctx.e2(Expr::Typeof(body_ctx.bvar0())),
+                     right: ty2,
+                  }));
+               }
+               PreParam::Type(ty) => todo!(),
+               PreParam::Full { name, ty } => todo!(),
+            }
+         }
+
+         let body2;
+         {
+            use parser::PreLamBody::*;
+            match body {
+               Return(e) => {
+                  // This is the easy case.
+                  // We make sure to use the body ctx
+                  let (e_body, c) = elab_expr(&body_ctx, &e.inner);
+                  // your constraints are my constraints
+                  constraints.append(c);
+                  body2 = e_body;
+               }
+               Block(b) => todo!(),
+            }
+         }
+
+         let lam2 = ctx.e2(Expr::Lam {
+            info: BinderInfo::Default,
+            params: params2,
+            body: body2,
+         });
+
+         return (lam2, constraints);
+      }
+      pe => panic!("Cannot elaborate {:#?}!", pe),
+   }
+}
+
+use std::fmt::Debug;
+use std::sync::atomic::AtomicU32;
+
+use im::{HashMap, Vector};
+use pub_fields::pub_fields;
+
+#[pub_fields]
+#[derive(Clone)]
+pub struct Statement2<'src, 'f> {
+   pub stmt: &'f Statement<'src, 'f>,
+   /// Context after the Statement
+   pub ctx: Context<'src, 'f>,
+}
+
+#[derive(Clone)]
+pub struct Expr2<'src, 'f> {
+   pub expr: &'f Expr<'src, 'f>,
+   /// Context after the Expr
+   pub ctx: Context<'src, 'f>,
+}
+
+impl <'src, 'f> Debug for Statement2<'src, 'f> {
+   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+      self.stmt.fmt(f)
+   }
+}
+
+impl <'src, 'f> Debug for Expr2<'src, 'f> {
+   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+      self.expr.fmt(f)
+   }
+}
+
+#[derive(Debug)]
+pub enum Statement<'src, 'f> {
+   Const {
+      name: &'src str,
+      val: &'f Expr2<'src, 'f>,
+   },
+   Let {
+      name: &'src str,
+      val: Option<&'f Expr2<'src, 'f>>,
+   },
+   If {
+      cond: &'f Expr2<'src, 'f>,
+      then: &'f Expr2<'src, 'f>,
+      elze: &'f Expr2<'src, 'f>,
+   },
+   Assign {
+      lhs: &'f Expr2<'src, 'f>,
+      rhs: &'f Expr2<'src, 'f>,
+   },
+   Return(&'f Expr2<'src, 'f>),
+
+   // BareExpr(Expr2<'src, 'f>),
+   // Check(Expr2<'src, 'f>),
+   // Eval(Expr2<'src, 'f>),
+}
+
+#[derive(Clone, Debug)]
+pub enum Expr<'src, 'f> {
+   Sort(u32),
+
+   FVar(FVarId),
+   /// Bound variables, De Bruijn Style
+   ///
+   /// ```ts
+   /// a => a;
+   /// ```
+   /// Is elaborated to:
+   /// ```rs
+   /// Lam {
+   ///   info: BinderInfo::Default,
+   ///   param: [Param {name: Name::Str("a")}],
+   ///   body: BVar(BVarId(0)),
+   /// }
+   /// ```
+   BVar(BVarId),
+   /// Metavariables
+   /// `?m.1`
+   MVar(MVarId),
+
+   Typeof(&'f Expr2<'src, 'f>),
+   Pi {
+      info: BinderInfo,
+      /// This parameter records the names as they were written in the source
+      /// code and the arity of the function.
+      params: Vec<&'f Param<'src, 'f>>,
+      body: &'f Expr2<'src, 'f>,
+   },
+   Lam {
+      info: BinderInfo,
+      params: Vec<&'f Param<'src, 'f>>,
+      body: &'f Expr2<'src, 'f>,
+   },
+   // Cast {
+   //    expr: Expr<'src>,
+   //    ty: Expr<'src>,
+   // },
+   Eq {
+      left: &'f Expr2<'src, 'f>,
+      right: &'f Expr2<'src, 'f>,
+   },
+
+   Extends {
+      sub: &'f Expr2<'src, 'f>,
+      sup: &'f Expr2<'src, 'f>,
+   },
+
+   Block(Vec<&'f Statement2<'src, 'f>>),
+   // Binary {
+   //    op: BinOp,
+   //    left: Box<Expr<'src>>,
+   //    right: Box<Expr<'src>>,
+   // },
+   // ArrayT(Box<Expr<'src>>),
+}
+
+
+#[derive(Copy, Clone)]
+pub struct MVarId(pub u32);
+impl Debug for MVarId {
+   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+      write!(f, "?m.{}", self.0)
+   }
+}
+
+#[derive(Copy, Clone)]
+pub struct FVarId(pub u32);
+impl Debug for FVarId {
+   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+      write!(f, "f.{}", self.0)
+   }
+}
+
+#[derive(Copy, Clone)]
+pub struct BVarId(pub u32);
+impl Debug for BVarId {
+   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+      write!(f, "#{}", self.0)
+   }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum BinderInfo {
+   Default,
+   Implicit,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum Name<'src> {
+   Anon,
+   Str(&'src str),
+   Num{
+      // pre: Box<Name<'src>>,
+      i: u32,
+   },
+}
+
+#[derive(Clone, Debug)]
+pub struct Param<'src, 'f> {
+   pub name: Name<'src>,
+   pub ty: Expr2<'src, 'f>,
+}
+
+#[pub_fields]
+#[derive(Clone)]
+pub struct Context<'src, 'f> {
+   al: &'f Bump,
+   id: IdentContext<'src, 'f>,
+   ty: TypeContext<'src, 'f>,
+}
+impl <'src, 'f> Context<'src, 'f> {
+   pub fn new(al: &'f Bump, fresh: &'f FreshCtx) -> Self {
+      Context {
+         al,
+         id: IdentContext::new(fresh),
+         ty: TypeContext::new(),
+      }
+   }
+   pub fn s2(&self, stmt: Statement<'src, 'f>) -> &'f Statement2<'src, 'f> {
+      self.al.alloc(Statement2 { stmt: self.al.alloc(stmt), ctx: self.clone() })
+   }
+   pub fn e2(&self, expr: Expr<'src, 'f>) -> &'f Expr2<'src, 'f> {
+      self.al.alloc(Expr2 { expr: self.al.alloc(expr), ctx: self.clone() })
+   }
+   pub fn owns<T>(&self, x: T) -> &'f T {
+      self.al.alloc(x)
+   }
+   pub fn ident(&self, name: &'src str) -> &'f Expr2<'src, 'f> {
+      self.e2(self.id.get(name).unwrap())
+   }
+   pub fn bvar0(&self) -> &'f Expr2<'src, 'f> {
+      self.e2(self.id.bvar0())
+   }
+
+   pub fn new_fvar(&self, name: &'src str, ty: &'f Expr2<'src, 'f>) -> Self {
+      let id_next = self.id.open_fvar(name);
+      let fvar_fact = self.e2(Expr::Eq {
+         left: self.e2(Expr::Typeof(self.e2(id_next.get(name).unwrap()))),
+         right: ty,
+      });
+      Context {
+         al: self.al,
+         id: id_next,
+         ty: self.ty.push_fact(fvar_fact),
+      }
+   }
+
+   pub fn new_bvar(&self, name: &'src str, ty: &'f Expr2<'src, 'f>) -> Self {
+      let id_next = self.id.bind_var(name);
+      let bvar_fact = self.e2(Expr::Eq {
+         left: self.e2(Expr::Typeof(self.e2(id_next.bvar0()))),
+         right: ty,
+      });
+      Context {
+         al: self.al,
+         id: id_next,
+         ty: self.ty.push_fact(bvar_fact),
+      }
+   }
+}
 
 /// Context for getting fresh variables.
 pub struct FreshCtx {
@@ -23,31 +385,31 @@ pub struct FreshCtx {
 impl FreshCtx {
    pub fn new() -> FreshCtx {
       FreshCtx {
-         fvar: AtomicU32::new(0),
-         mvar: AtomicU32::new(0),
+         fvar: AtomicU32::new(1),
+         mvar: AtomicU32::new(1),
       }
    }
 
-   fn fvar<'src>(&self) -> expr::FVarId {
+   fn fvar<'src>(&self) -> FVarId {
       let id = self.fvar.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
       if id == 0 {
          panic!("FVarId overflowed!")
       }
-      expr::FVarId(id)
+      FVarId(id)
    }
 
-   fn mvar<'src>(&self) -> expr::MVarId {
+   fn mvar<'src>(&self) -> MVarId {
       let id = self.mvar.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
       if id == 0 {
          panic!("MVarId overflowed!")
       }
-      expr::MVarId(id)
+      MVarId(id)
    }
 }
 
 #[derive(Clone)]
 pub enum Ident {
-   FVar(expr::FVarId),
+   FVar(FVarId),
    /// Don't get it twisted, this is not the actual BVarId.
    /// The outermost BVar has value 0, whereas the innermost BVar has value n.
    BVarReverse(u32),
@@ -60,7 +422,11 @@ pub struct IdentContext<'src, 'f> {
    lookup: HashMap<&'src str, Ident>,
 }
 impl <'src, 'f> IdentContext<'src, 'f> {
-   fn bind_var(&self, name: &'src str) -> Self {
+   fn new(fresh: &'f FreshCtx) -> Self {
+      IdentContext { fresh, depth: 0, lookup: HashMap::new() }
+   }
+
+   pub fn bind_var(&self, name: &'src str) -> Self {
       IdentContext {
          fresh: self.fresh,
          depth: self.depth + 1,
@@ -68,7 +434,7 @@ impl <'src, 'f> IdentContext<'src, 'f> {
       }
    }
 
-   fn push_bvar(&self) -> Self {
+   pub fn push_bvar(&self) -> Self {
       IdentContext {
          fresh: self.fresh,
          depth: self.depth + 1,
@@ -76,7 +442,7 @@ impl <'src, 'f> IdentContext<'src, 'f> {
       }
    }
 
-   fn open_fvar(&self, name: &'src str) -> Self {
+   pub fn open_fvar(&self, name: &'src str) -> Self {
       IdentContext {
          fresh: self.fresh,
          depth: self.depth,
@@ -84,40 +450,44 @@ impl <'src, 'f> IdentContext<'src, 'f> {
       }
    }
 
-   fn fresh_mvar<'src2, 'f2>(&self) -> Expr<'src2, 'f2> {
+   pub fn fresh_mvar<'src2, 'f2>(&self) -> Expr<'src2, 'f2> {
       Expr::MVar(self.fresh.mvar())
    }
 
-   fn get<'src2, 'f2>(&self, name: &'src str) -> Option<Expr<'src2, 'f2>> {
+   pub fn get<'src2, 'f2>(&self, name: &'src str) -> Option<Expr<'src2, 'f2>> {
       self.lookup.get(name).map(|x|
          match x.clone() {
             Ident::FVar(id) => Expr::FVar(id),
             Ident::BVarReverse(rev_id) => Expr::BVar(
-               expr::BVarId(self.depth - rev_id)
+               BVarId(self.depth - rev_id)
             ),
          }
       )
    }
 
-   fn bvar0<'f2>(&self) -> Expr<'src, 'f> {
+   pub fn bvar0<'f2>(&self) -> Expr<'src, 'f> {
       if self.depth == 0 {
          panic!("#0 is not bound!")
       }
-      Expr::BVar(expr::BVarId(0))
+      Expr::BVar(BVarId(0))
    }
 }
 
 // Proof/type context Gamma
 #[derive(Clone)]
 pub enum TypeContext<'src, 'f> {
-   Flat(Vector<&'f Expr<'src, 'f>>),
+   Flat(Vector<&'f Expr2<'src, 'f>>),
    /// {x : string} ⊔ {x : number} => {x : string | number}
    Join(&'f TypeContext<'src, 'f>, &'f TypeContext<'src, 'f>),
    /// {x : 1 | 2} ⊓ {x : 1 | "foo"} => {x : 1}
    Meet(&'f TypeContext<'src, 'f>, &'f TypeContext<'src, 'f>),
 }
 impl <'src, 'f> TypeContext<'src, 'f> {
-   fn push_fact(&self, e: &'f Expr<'src, 'f>) -> TypeContext<'src, 'f> {
+   pub fn new() -> Self {
+      TypeContext::Flat(Vector::new())
+   }
+
+   pub fn push_fact(&self, e: &'f Expr2<'src, 'f>) -> TypeContext<'src, 'f> {
       use TypeContext::*;
       match self {
          Flat(v) => {
@@ -128,7 +498,7 @@ impl <'src, 'f> TypeContext<'src, 'f> {
          _ => todo!(),
       }
    }
-   fn query(e: Expr<'src, 'f>) {
+   pub fn query(e: Expr<'src, 'f>) {
       match e {
          Expr::BVar(bvar_id) => todo!(),
          Expr::FVar(fvar_id) => todo!(),
@@ -140,135 +510,18 @@ impl <'src, 'f> TypeContext<'src, 'f> {
 }
 
 /// Should contain only Prop
-struct Constraints<'src, 'f>(Vector<&'f Expr<'src, 'f>>);
+#[derive(Clone)]
+pub struct Constraints<'src, 'f>(Vector<&'f Expr2<'src, 'f>>);
 impl <'src, 'f> Constraints<'src, 'f> {
-   fn append(&mut self, c: Constraints<'src, 'f>) {
+   pub fn new() -> Self {
+      Constraints(Vector::new())
+   }
+
+   pub fn append(&mut self, c: Constraints<'src, 'f>) {
       self.0.append(c.0);
    }
-}
 
-struct ElaboratedExpr<'src, 'f> {
-   expr: &'f Expr<'src, 'f>,
-   ty: &'f Expr<'src, 'f>,
-   c: Constraints<'src, 'f>,
-}
-
-pub fn elab_expr<'src, 'f>(
-   pe: &PreExpr<'src>,
-   al: &'f Bump,
-   it_ctx: IdentContext<'src, 'f>,
-   ty_ctx: TypeContext<'src, 'f>
-) -> ElaboratedExpr<'src, 'f>
-{
-   use parser::PreExpr::*;
-   let mut constraints = Constraints(Vector::new());
-   match pe {
-      Lam { implicit, params, body } => {
-         if *implicit {
-            todo!();
-         }
-         let mut param_names = HashSet::new();
-         let mut eparams = Vec::with_capacity(params.len());
-         let mut it_ctx = it_ctx;
-         let mut ty_ctx = ty_ctx;
-         for param in params {
-            use parser::PreParam::*;
-            match param {
-               Name(name) => {
-                  if param_names.contains(name) {
-                     panic!("Cannot bind {} a second time!", name)
-                  } else {
-                     param_names.insert(name);
-                  }
-                  let ty = it_ctx.fresh_mvar().b(al);
-                  eparams.push(
-                     expr::Param {
-                        name: expr::Name::Str(name),
-                        ty,
-                     }.b(al)
-                  );
-                  it_ctx = it_ctx.bind_var(name);
-                  ty_ctx = ty_ctx.push_fact(
-                     Expr::Eq {
-                        left: Expr::Typeof(it_ctx.bvar0().b(al)).b(al),
-                        right: ty.b(al),
-                     }.b(al)
-                  );
-               }
-               Type(ty) => {
-                  // Elaborate the type
-                  let ety = elab_expr(pe, al, it_ctx.clone(), ty_ctx.clone());
-                  // Your constraints are my constraints now.
-                  constraints.append(ety.c);
-                  // Throw away the type of the type. I don't care.
-                  let ety = ety.ty;
-                  eparams.push(
-                     expr::Param {
-                        name: expr::Name::Anon,
-                        ty: ety,
-                     }.b(al)
-                  );
-                  it_ctx = it_ctx.push_bvar();
-               }
-               Full { name, ty } => {
-                  let ety = elab_expr(pe, al, it_ctx.clone(), ty_ctx.clone());
-                  constraints.append(ety.c);
-                  let ety = ety.ty;
-                  eparams.push(
-                     expr::Param {
-                        name: expr::Name::Str(name),
-                        ty: ety,
-                     }.b(al)
-                  );
-                  it_ctx = it_ctx.bind_var(name);
-                  ty_ctx = ty_ctx.push_fact(
-                     Expr::Eq {
-                        left: Expr::Typeof(it_ctx.bvar0().b(al)).b(al),
-                        right: ety.b(al),
-                     }.b(al)
-                  )
-               }
-            }
-         }
-
-         let return_ty;
-         let ebody;
-         {
-            use parser::PreLamBody::*;
-            match body {
-               Return(e) => {
-                  // This is the easy case.
-                  let ee = elab_expr(&e.inner, al, it_ctx.clone(), ty_ctx.clone());
-                  // your constraints are my constraints
-                  constraints.0.append(ee.c.0);
-                  return_ty = ee.ty;
-                  ebody = vec![expr::Statement::Return(ee.expr).b(al)];
-               },
-               Block(b) => todo!(),
-            }
-         }
-
-         let elam = Expr::Lam {
-            info: expr::BinderInfo::Default,
-            params: eparams.clone(),
-            body: ebody,
-         }.b(al);
-
-         return ElaboratedExpr {
-            expr: elam,
-            ty: Expr::Pi {
-               info: expr::BinderInfo::Default,
-               params: eparams,
-               body: return_ty.b(al),
-            }.b(al),
-            c: constraints,
-         }
-      }
-
-      pe => panic!("Cannot elaborate {:#?}!", pe),
+   pub fn add(&mut self, e: &'f Expr2<'src, 'f>) {
+      self.0.push_back(e);
    }
 }
-
-// pub fn elab_statement<'src, 'f>(
-   
-// )
