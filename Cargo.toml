@@ -4,5 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+argh = "0.1.19"
+bumpalo = {version = "3.20.3", features = ["collections"]}
 chumsky = {version = "0.13.0", features = ["pratt"]}
 im = "15.1.0"
+pretty = "0.12.5"

@@ -2,6 +2,7 @@ use chumsky::prelude::*;
 use chumsky::input::{MappedInput};
 use chumsky::error::Rich;
 use chumsky::pratt::*;
+use pretty::{DocAllocator, DocBuilder, Pretty};
 
 pub type Span = SimpleSpan;
 pub type EError<'src, T> = extra::Err<Rich<'src, T, Span>>;
@@ -57,7 +58,7 @@ pub enum Token<'src> {
    String(&'src str),
 }
 
-pub fn lex<'src>() -> impl Parser<'src, &'src str, Vec<Token<'src>>> {
+pub fn lex<'src>() -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>>> {
    use Token::*;
    let kw = choice((
       just("let").to(Let),
@@ -119,6 +120,7 @@ pub type PreBlock<'src> = Vec<Spanned<PreStatement<'src>>>;
 #[derive(Clone, Debug)]
 pub enum PreParam<'src> {
    Name(&'src str),
+   #[deprecated(note="use name with anonymous")]
    Type(PPreExpr<'src>),
    Full { name: &'src str, ty: PPreExpr<'src> },
 }
@@ -145,18 +147,10 @@ pub enum Unary {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Prim<'src> {
-   Undefined,
-   True,
-   False,
-   Nat(u64),
    Int(i64),
    Float(f64),
    String(&'src str),
 }
-
-static DISALLOWED_IDENT: &[&'static str] = &[
-   "undefined", "number", "string", "boolean",
-];
 
 #[derive(Clone, Debug)]
 pub enum PreLamBody<'src> {
@@ -214,6 +208,34 @@ pub enum PreStatement<'src> {
    Expr(PPreExpr<'src>),
 }
 
+impl <'src, 'a, D, A> Pretty<'a, D, A> for &PreStatement<'src>
+where
+   A: 'a,
+   D: DocAllocator<'a, A>,
+   D::Doc: Clone,
+{
+   fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A>
+
+   {
+      use PreStatement::*;
+      match self {
+         Error => allocator.text("Error"),
+         // Let {name, ty, val} => allocator.text("let").,
+         _ => todo!(),
+      }
+   }
+}
+
+fn pretty_spanned<'a, D, A, T>(s: Spanned<T>, allocator: &'a D) -> pretty::DocBuilder<'a, D, A>
+where
+   D: pretty::DocAllocator<'a, A>,
+   D::Doc: Clone,
+   A: Clone,
+   T: Pretty<'a, D, A>,
+{
+   s.inner.pretty(allocator)
+}
+
 pub fn pre_block<'tokens, 'src: 'tokens>() ->
    impl Parser<
       'tokens,
@@ -224,24 +246,29 @@ pub fn pre_block<'tokens, 'src: 'tokens>() ->
 {
    let mut stmt = Recursive::declare();
    let mut expr = Recursive::declare();
-   let ident_bind = select! {
-      Token::Word(w) if !DISALLOWED_IDENT.contains(&w) => w,
-   }.labelled("bound variable");
    let stmts = stmt.clone().separated_by(just(Token::Semi)).allow_trailing().collect();
-   let ascription = just(Token::Colon).ignore_then(expr.clone()).map(Box::new);
+   let ascription = just(Token::Colon).ignore_then(expr.clone()).map(Box::new).labelled("type ascription");
+   let ident_bind = select! {Token::Word(w) => w}.labelled("ident");
    {
       use PreStatement::*;
-      let def = just(Token::Let)
+      let def = just(Token::Eq).ignore_then(expr.clone()).map(Box::new);
+
+      let r#let = just(Token::Let)
          .ignore_then(ident_bind)
          .then(ascription.clone().or_not())
-         .then_ignore(just(Token::Eq))
-         .then(expr.clone())
+         .then(def.clone().or_not())
          .map(|((name, ty), val)| {
             // It's amusing that the name (&str) has a Span.
             // They're both effectively the same as each other.
             // A Span carries the data in indices whereas the &str is a fat pointer.
-            Let { name: name, ty, val: Box::new(val) }
+            Let { name: name, ty, val }
          });
+
+      let r#const = just(Token::Const)
+         .ignore_then(ident_bind)
+         .then(ascription.clone().or_not())
+         .then(def)
+         .map(|((name, ty), val)| Const { name, ty, val });
 
       let check = just(Token::Check)
          .ignore_then(expr.clone())
@@ -255,7 +282,7 @@ pub fn pre_block<'tokens, 'src: 'tokens>() ->
 
       let raw_expr = expr.clone().map(Box::new).map(Expr);
 
-      stmt.define(choice((def, check, eval, raw_expr)).spanned());
+      stmt.define(choice((r#let, r#const, check, eval, raw_expr)).spanned());
    }
 
    {
@@ -268,9 +295,6 @@ pub fn pre_block<'tokens, 'src: 'tokens>() ->
          Prop => PreExpr::Prop,
          TyTrue => PreExpr::TyTrue,
          TyFalse => PreExpr::TyFalse,
-         Word("undefined") => PreExpr::Prim(Undefined),
-         Word("true") => PreExpr::Prim(True),
-         Word("false") => PreExpr::Prim(False),
       };
 
       let metavariable = just(Question).ignore_then(
@@ -282,10 +306,6 @@ pub fn pre_block<'tokens, 'src: 'tokens>() ->
          .labelled("identifier");
 
       let num = select! { Number(s) => s }.validate(|s, e, emit| {
-         if let Ok(n) = s.parse::<u64>() {
-            return PreExpr::Prim(Nat(n));
-         }
-
          if let Ok(n) = s.parse::<i64>() {
             return PreExpr::Prim(Int(n));
          }
@@ -352,7 +372,7 @@ pub fn pre_block<'tokens, 'src: 'tokens>() ->
          infix(left(1),
             just(As).map(|_| BinOp::Cast),
             |l, o, r, e| PreExpr::BinOp {
-               op, o,
+               op: o,
                left: Box::new(l),
                right: Box::new(r),
             }.with_span(e.span())

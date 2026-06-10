@@ -1,77 +1,68 @@
-#![feature(impl_trait_in_bindings)]
-#![feature(coroutines, coroutine_trait, stmt_expr_attributes)]
+#![feature(allocator_api)]
+// #![feature(impl_trait_in_bindings)]
+// #![feature(coroutines, coroutine_trait, stmt_expr_attributes)]
 
-use core::time;
-use std::ops::{Coroutine, CoroutineState};
-use std::pin::Pin;
-use std::thread::sleep;
+use std::fs;
 
-use chumsky::prelude::*;
 
+use chumsky::prelude::{Parser, Input};
+
+mod shared;
 mod parser;
 mod elab;
+mod expr;
 
-fn main() {
-   let mut coroutine = #[coroutine]
-   || {
-      yield 1;
-      yield 2;
-      yield 3;
-      return "foo";
-   };
+use argh::FromArgs;
 
-   loop {
-      sleep(time::Duration::from_secs(1));
-      match Pin::new(&mut coroutine).resume(()) {
-         CoroutineState::Yielded(x) => println!("Yielded {}", x),
-         CoroutineState::Complete(x) => {
-            println!("Completed with {}", x);
-            break;
-         }
-      }
+#[derive(FromArgs)]
+/// Teaspoon Compiler
+#[argh(help_triggers("-h", "--help", "help", "/?", "/help"))]
+struct TeaspoonArgs {
+   /// input.tsp file
+   #[argh(positional)]
+   src: String,
 
-   }
-   /*
-   loop {
-      print!("> ");
-      std::io::Write::flush(&mut std::io::stdout()).unwrap();
-
-      let mut input = String::new();
-      match std::io::stdin().read_line(&mut input) {
-         Ok(0) => break, // EOF
-         Ok(_) => {}
-         Err(_) => break,
-      }
-
-      let input = input.trim();
-      if input.is_empty() {
-         continue;
-      }
-
-      let res = parser::lex().parse(input);
-      match res.output() {
-         Some(tokens) => {
-            for t in tokens {
-               println!("  {:?} at {:?}", t.inner, t.span);
-            }
-            let q = tokens.split_spanned((0..input.len()).into());
-            let res2 = parser::pre_statements().parse(q);
-            match res2.output() {
-               Some(exprs) => {
-                  println!("  {:#?}", exprs);
-               }
-               None => {
-                  println!("  Parse Error")
-               }
-            }
-         }
-         None => {
-            for err in res.errors() {
-               println!("  Token Error: {:?}", err);
-            }
-         }
-      }
-   }
-   */
+   // /// whether or not to jump
+   // #[argh(switch, short = 'j')]
+   // jump: bool,
 }
 
+fn main() {
+   let args: TeaspoonArgs = argh::from_env();
+
+   let src_file = fs::read_to_string(&args.src).expect("File does not exist!");
+   println!("Read {}:", &args.src);
+   println!("{}", &src_file);
+
+   let tokens;
+   let res = parser::lex().parse(&src_file);
+   {
+      let errs = res.errors();
+      if errs.len() > 0 {
+         eprintln!("Tokenization Errors:");
+      }
+      for err in errs {
+         eprintln!("{:?}", err);
+      }
+      tokens = res.output().expect("Tokenizing Failed!");
+   }
+   println!("Tokens:");
+   println!("{:?}", tokens.iter().map(|t| t.inner).collect::<Vec<_>>());
+
+   let pre_block;
+   let res = parser::pre_block().parse(tokens.split_spanned((0..src_file.len()).into()));
+   {
+      let errs = res.errors();
+      if errs.len() > 0 {
+         eprintln!("Parse Errors:");
+      }
+      for err in errs {
+         eprintln!("{:?}", err);
+      }
+      pre_block = res.output().expect("Parsing Failed!");
+   }
+   println!("Pre-parse:");
+   println!("{:#?}", pre_block);
+
+   // let res = elab::elab_expr(pe, al, it_ctx, ty_ctx);
+}
