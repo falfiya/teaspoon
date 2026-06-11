@@ -1,2 +1,2 @@
 run:
-	cargo run -- example/001_id.tsp
+	cargo run -- example/002_id5.tsp

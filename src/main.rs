@@ -12,6 +12,7 @@ mod parser;
 mod elab;
 
 use argh::FromArgs;
+use pretty::Pretty;
 
 #[derive(FromArgs)]
 /// Teaspoon Compiler
@@ -69,5 +70,17 @@ fn main() {
    let res = elab::elab_block(&ctx, pre_block);
    println!("Elaboration:");
    println!("{:#?}", res.expr);
-   println!("{:#?}", res.ctx);
+   if let elab::Expr::Block(v) = res.expr {
+      print!("{}", v.len().to_string());
+      if v.len() == 1 {
+         print!(" statement");
+      } else {
+         print!(" statements");
+      }
+      println!(" elaborated.");
+      if v.len() > 0 {
+         println!("Final Scope:");
+         println!("{}", v.last().unwrap().ctx);
+      }
+   }
 }

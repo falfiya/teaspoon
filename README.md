@@ -8,18 +8,3 @@ Static type systems for programming languages provide stronger guarantees of pro
 
 https://peanoscript.mjgrzymek.com/tutorial
 
-## Example
-
-```ts
-let nat =
-   | 0
-   | [nat];
-
-let p: Prop = 0 @== 0;
-let 
-```
-
-Γ ⊢ f : t₁ → t₂, C        Γ ⊢ x : unknown, _
---------------------------------------------- app
-          Γ ⊢ f(x), C ∪ {x : t₁}
-

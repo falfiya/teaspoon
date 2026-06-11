@@ -1,5 +1,6 @@
 use bumpalo::Bump;
-use std::collections::HashSet;
+use pretty::{DocAllocator, DocBuilder, Pretty};
+use std::{collections::HashSet, fmt::Display};
 
 use crate::parser::{self, PreBlock, PreExpr, PreStatement};
 
@@ -12,7 +13,7 @@ impl <'src, 'f> Expr2<'src, 'f> {
             // THIS IS WRONG
             // When you ask for the type of something, you need to include YOUR context.
             // The type of something may not be assignable to your context super easily.
-            let pi = self.ctx.e2(Expr::Pi { info: *info, params: params.clone(), body: body_ty});
+            let pi = self.ctx.e2(Expr::Pi { info: *info, params: params.clone(), ret: body_ty});
             return (pi, c);
          }
          anything_else => todo!("Cannot get type of {:#?}", anything_else)
@@ -125,7 +126,7 @@ pub fn elab_expr<'src, 'f>(
                   // Create metavariable ?T
                   let ty2 = body_ctx.e2(body_ctx.id.fresh_mvar());
                   params2.push(
-                     body_ctx.owns(Param { name: Name::Str(name), ty: ty2.clone() })
+                     body_ctx.owns(Param { name: Name::Str(name), ty: ty2 })
                   );
                   // Bind name -> #0
                   body_ctx.id = body_ctx.id.bind_var(name);
@@ -256,7 +257,7 @@ pub enum Expr<'src, 'f> {
       /// This parameter records the names as they were written in the source
       /// code and the arity of the function.
       params: Vec<&'f Param<'src, 'f>>,
-      body: &'f Expr2<'src, 'f>,
+      ret: &'f Expr2<'src, 'f>,
    },
    Lam {
       info: BinderInfo,
@@ -295,7 +296,7 @@ impl Debug for MVarId {
    }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct FVarId(pub u32);
 impl Debug for FVarId {
    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -330,7 +331,7 @@ pub enum Name<'src> {
 #[derive(Clone, Debug)]
 pub struct Param<'src, 'f> {
    pub name: Name<'src>,
-   pub ty: Expr2<'src, 'f>,
+   pub ty: &'f Expr2<'src, 'f>,
 }
 
 #[pub_fields]
@@ -410,11 +411,9 @@ impl <'src, 'f> Context<'src, 'f> {
    pub fn query_bvar_type(&self, id: BVarId) -> &'f Expr2<'src, 'f> {
       self.ty.query_bvar_type(id)
    }
-}
 
-impl std::fmt::Display for Context<'_, '_> {
-   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-      
+   pub fn query_fvar_type(&self, id: FVarId) -> &'f Expr2<'src, 'f> {
+      self.ty.query_fvar_type(id)
    }
 }
 
@@ -517,6 +516,10 @@ impl <'src, 'f> IdentContext<'src, 'f> {
       }
       Expr::BVar(BVarId(0))
    }
+
+   pub fn list(&self) -> Vec<&'src str> {
+      self.lookup.keys().map(|k| *k).collect()
+   }
 }
 
 // Proof/type context Gamma
@@ -566,6 +569,28 @@ impl <'src, 'f> TypeContext<'src, 'f> {
          _ => todo!(),
       }
    }
+
+   pub fn query_fvar_type(&self, id: FVarId) -> &'f Expr2<'src, 'f> {
+      use TypeContext::*;
+      match self {
+         Flat(v) => {
+            for fact in v {
+               match fact.expr {
+                  Expr::Eq { left, right } => {
+                     if let Expr::Typeof(x) = left.expr {
+                        if let Expr::FVar(id2) = x.expr && id == *id2 {
+                           return right;
+                        }
+                     }
+                  }
+                  _ => ()
+               }
+            }
+            panic!("Could not compute type for {:?}", id);
+         }
+         _ => todo!(),
+      }
+   }
 }
 
 /// Should contain only Prop
@@ -582,5 +607,88 @@ impl <'src, 'f> Constraints<'src, 'f> {
 
    pub fn add(&mut self, e: &'f Expr2<'src, 'f>) {
       self.0.push_back(e);
+   }
+}
+
+impl <'src: 'a, 'f, 'a, D, A> Pretty<'a, D, A> for &Expr2<'src, 'f>
+where
+   A: 'a,
+   D: DocAllocator<'a, A>,
+   D::Doc: Clone,
+{
+   fn pretty(self, pty: &'a D) -> DocBuilder<'a, D, A> {
+      match self.expr {
+         Expr::BVar(id) => pty.text(format!("{:?}", id)),
+         Expr::FVar(id) => pty.text(format!("{:?}", id)),
+         Expr::MVar(id) => pty.text(format!("{:?}", id)),
+         Expr::Eq { left, right } => left.pretty(pty).parens().append(" @== ").append(right.pretty(pty).parens()),
+         Expr::Typeof(e) => pty.text("typeof ").append(*e),
+         Expr::Pi { info: BinderInfo::Default, params, ret } =>
+            pty.intersperse(params.iter().map(|p| *p), ", ").parens().append(" -> ").append(*ret),
+         idk => pty.text(format!("{:?}", idk))
+      }
+   }
+}
+
+impl <'src: 'a, 'f, 'a, D, A> Pretty<'a, D, A> for &Context<'src, 'f>
+where
+   A: 'a,
+   D: DocAllocator<'a, A>,
+   D::Doc: Clone,
+   A: Clone,
+{
+   fn pretty(self, pty: &'a D) -> DocBuilder<'a, D, A>
+   {
+      let depth = pty.text("at depth ").append(pty.text(self.id.depth.to_string()));
+      let separator = pty.text(",").append(pty.hardline());
+      let bindings = pty.intersperse(self.id.list().iter().map(|k| pty.text(*k).append(" is ").append(self.ident(k))), separator.clone());
+      let props;
+      if let TypeContext::Flat(v) = &self.ty {
+         props = pty.intersperse(v.clone(), separator);
+      } else {
+         todo!();
+      }
+      let inside =
+         depth.append(pty.hardline())
+         .append(bindings).append(pty.hardline()).append(pty.hardline())
+         .append(props);
+
+      pty.text("Context")
+         .append(pty.hardline().append(inside).append(pty.hardline()).group().nest(3).enclose(" {", "}"))
+   }
+}
+
+impl Display for Context<'_, '_> {
+   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+      let allocator = pretty::BoxAllocator;
+      let mut mem = Vec::new();
+      _ = Pretty::<_, ()>::pretty(self, &allocator).1.render(70, &mut mem);
+      f.write_str(str::from_utf8(&mem).unwrap())
+   }
+}
+
+impl <'src: 'a, 'f, 'a, D, A> Pretty<'a, D, A> for &Param<'src, 'f>
+where
+   A: 'a,
+   D: DocAllocator<'a, A>,
+   D::Doc: Clone,
+{
+   fn pretty(self, pty: &'a D) -> DocBuilder<'a, D, A> {
+      self.name.pretty(pty).append(": ").append(self.ty)
+   }
+}
+
+impl <'src: 'a, 'f, 'a, D, A> Pretty<'a, D, A> for Name<'src>
+where
+   A: 'a,
+   D: DocAllocator<'a, A>,
+   D::Doc: Clone,
+{
+   fn pretty(self, pty: &'a D) -> DocBuilder<'a, D, A> {
+      match self {
+         Name::Anon => pty.text("_"),
+         Name::Str(s) => pty.text(s),
+         rest => pty.text(format!("{:?}", rest))
+      }
    }
 }

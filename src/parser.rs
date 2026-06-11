@@ -14,6 +14,7 @@ pub enum Token<'src> {
    If, Else,
    Loop,
    Check, Eval,
+   Declare, Return,
 
    // Keywords
    Infer, Extends,
@@ -63,6 +64,8 @@ pub fn lex<'src>() -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>>> {
    let kw = choice((
       just("let").to(Let),
       just("const").to(Const),
+      just("declare").to(Declare),
+      just("return").to(Return),
       just("loop").to(Loop),
       just("#check").to(Check),
       just("#eval").to(Eval),
@@ -182,6 +185,11 @@ pub enum PreExpr<'src> {
       params: Vec<PreParam<'src>>,
       body: PreLamBody<'src>,
    },
+   Pi {
+      implicit: bool,
+      params: Vec<PreParam<'src>>,
+      ret: PPreExpr<'src>,
+   }
 }
 
 #[derive(Clone, Debug)]
@@ -197,6 +205,10 @@ pub enum PreStatement<'src> {
       ty: Option<PPreExpr<'src>>,
       val: PPreExpr<'src>,
    },
+   DeclareConst {
+      name: &'src str,
+      ty: PPreExpr<'src>,
+   },
    Check(PPreExpr<'src>),
    Eval(PPreExpr<'src>),
    If {
@@ -206,6 +218,7 @@ pub enum PreStatement<'src> {
    },
    Loop(PreBlock<'src>),
    BareExpr(PPreExpr<'src>),
+   Return(PPreExpr<'src>),
 }
 
 impl <'src, 'a, D, A> Pretty<'a, D, A> for &PreStatement<'src>
@@ -215,7 +228,6 @@ where
    D::Doc: Clone,
 {
    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A>
-
    {
       use PreStatement::*;
       match self {
@@ -224,16 +236,6 @@ where
          _ => todo!(),
       }
    }
-}
-
-fn pretty_spanned<'a, D, A, T>(s: Spanned<T>, allocator: &'a D) -> pretty::DocBuilder<'a, D, A>
-where
-   D: pretty::DocAllocator<'a, A>,
-   D::Doc: Clone,
-   A: Clone,
-   T: Pretty<'a, D, A>,
-{
-   s.inner.pretty(allocator)
 }
 
 pub fn pre_block<'tokens, 'src: 'tokens>() ->
@@ -270,6 +272,12 @@ pub fn pre_block<'tokens, 'src: 'tokens>() ->
          .then(def)
          .map(|((name, ty), val)| Const { name, ty, val });
 
+      let declare_const = just(Token::Declare)
+         .ignore_then(just(Token::Const))
+         .ignore_then(ident_bind)
+         .then(ascription.clone())
+         .map(|(name, ty)| DeclareConst { name, ty });
+
       let check = just(Token::Check)
          .ignore_then(expr.clone())
          .map(Box::new)
@@ -280,9 +288,14 @@ pub fn pre_block<'tokens, 'src: 'tokens>() ->
          .map(Box::new)
          .map(Eval);
 
+      let ret = just(Token::Return)
+         .ignore_then(expr.clone())
+         .map(Box::new)
+         .map(Return);
+
       let raw_expr = expr.clone().map(Box::new).map(BareExpr);
 
-      stmt.define(choice((r#let, r#const, check, eval, raw_expr)).spanned());
+      stmt.define(choice((r#let, r#const, declare_const, check, eval, raw_expr, ret)).spanned());
    }
 
    {
@@ -403,13 +416,26 @@ pub fn pre_block<'tokens, 'src: 'tokens>() ->
       ));
 
       let lam = just(Infer).or_not().map(|o| o.is_some())
-         .then(single_anon.or(params))
+         .then(single_anon.or(params.clone()))
          .then_ignore(just(Arrow))
          .then(braced_body.or(expr_body))
          .map(|((implicit, params), body)| PreExpr::Lam {implicit, params, body})
          .spanned();
 
-      expr.define(lam.or(nl_expr))
+      let single_anon_type = nl_expr.clone().map(|e| vec![PreParam::Type(Box::new(e))]);
+
+      let pi_type = just(Infer).or_not().map(|o| o.is_some())
+         .then(params.or(single_anon_type))
+         .then_ignore(just(Pi))
+         .then(expr.clone().map(Box::new))
+         .map(|((implicit, params), ret)| PreExpr::Pi {implicit, params, ret})
+         .spanned();
+
+      expr.define(choice((
+         lam,
+         pi_type,
+         nl_expr,
+      )))
    }
 
    stmts
