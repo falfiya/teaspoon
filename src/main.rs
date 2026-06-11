@@ -67,4 +67,7 @@ fn main() {
    let fresh = elab::FreshCtx::new();
    let ctx = elab::Context::new(&al, &fresh);
    let res = elab::elab_block(&ctx, pre_block);
+   println!("Elaboration:");
+   println!("{:#?}", res.expr);
+   println!("{:#?}", res.ctx);
 }

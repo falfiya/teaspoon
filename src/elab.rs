@@ -5,7 +5,18 @@ use crate::parser::{self, PreBlock, PreExpr, PreStatement};
 
 impl <'src, 'f> Expr2<'src, 'f> {
    fn ty(&self) -> (&'f Expr2<'src, 'f>, Constraints<'src, 'f>) {
-      todo!();
+      match self.expr {
+         Expr::BVar(id) => (self.ctx.query_bvar_type(*id), Constraints::new()),
+         Expr::Lam { info, params, body } => {
+            let (body_ty, c) = body.ty();
+            // THIS IS WRONG
+            // When you ask for the type of something, you need to include YOUR context.
+            // The type of something may not be assignable to your context super easily.
+            let pi = self.ctx.e2(Expr::Pi { info: *info, params: params.clone(), body: body_ty});
+            return (pi, c);
+         }
+         anything_else => todo!("Cannot get type of {:#?}", anything_else)
+      }
    }
 }
 
@@ -86,6 +97,9 @@ pub fn elab_expr<'src, 'f>(
    use parser::PreExpr::*;
    let mut constraints = Constraints::new();
    match pe {
+      Ident(name) => {
+         (ctx.ident(name), constraints)
+      }
       Lam {
          implicit,
          params,
@@ -289,7 +303,7 @@ impl Debug for FVarId {
    }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct BVarId(pub u32);
 impl Debug for BVarId {
    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -343,37 +357,64 @@ impl <'src, 'f> Context<'src, 'f> {
    pub fn owns<T>(&self, x: T) -> &'f T {
       self.al.alloc(x)
    }
-   pub fn ident(&self, name: &'src str) -> &'f Expr2<'src, 'f> {
-      self.e2(self.id.get(name).unwrap())
-   }
-   pub fn bvar0(&self) -> &'f Expr2<'src, 'f> {
+
+   fn bvar0(&self) -> &'f Expr2<'src, 'f> {
       self.e2(self.id.bvar0())
    }
 
    pub fn new_fvar(&self, name: &'src str, ty: &'f Expr2<'src, 'f>) -> Self {
-      let id_next = self.id.open_fvar(name);
+      let tmp = Context {
+         al: self.al,
+         id: self.id.open_fvar(name),
+         ty: self.ty.clone(),
+      };
+      
       let fvar_fact = self.e2(Expr::Eq {
-         left: self.e2(Expr::Typeof(self.e2(id_next.get(name).unwrap()))),
+         left: self.e2(Expr::Typeof(tmp.ident(name))),
          right: ty,
       });
+
       Context {
          al: self.al,
-         id: id_next,
-         ty: self.ty.push_fact(fvar_fact),
+         id: tmp.id,
+         ty: tmp.ty.push_fact(fvar_fact),
       }
    }
 
    pub fn new_bvar(&self, name: &'src str, ty: &'f Expr2<'src, 'f>) -> Self {
-      let id_next = self.id.bind_var(name);
+      let tmp = Context {
+         al: self.al,
+         id: self.id.bind_var(name),
+         ty: self.ty.clone(),
+      };
+   
       let bvar_fact = self.e2(Expr::Eq {
-         left: self.e2(Expr::Typeof(self.e2(id_next.bvar0()))),
+         left: self.e2(Expr::Typeof(self.ident(name))),
          right: ty,
       });
+
       Context {
          al: self.al,
-         id: id_next,
-         ty: self.ty.push_fact(bvar_fact),
+         id: tmp.id,
+         ty: tmp.ty.push_fact(bvar_fact),
       }
+   }
+
+   pub fn ident(&self, name: &'src str) -> &'f Expr2<'src, 'f> {
+      match self.id.get(name).unwrap() {
+         BoundIdent::BVar(id) => self.e2(Expr::BVar(id)),
+         BoundIdent::FVar(id) => self.e2(Expr::FVar(id)),
+      }
+   }
+
+   pub fn query_bvar_type(&self, id: BVarId) -> &'f Expr2<'src, 'f> {
+      self.ty.query_bvar_type(id)
+   }
+}
+
+impl std::fmt::Display for Context<'_, '_> {
+   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+      
    }
 }
 
@@ -408,18 +449,22 @@ impl FreshCtx {
 }
 
 #[derive(Clone)]
-pub enum Ident {
+pub enum InternalIdentDoNotUse {
    FVar(FVarId),
    /// Don't get it twisted, this is not the actual BVarId.
    /// The outermost BVar has value 0, whereas the innermost BVar has value n.
    BVarReverse(u32),
+}
+pub enum BoundIdent {
+   FVar(FVarId),
+   BVar(BVarId),
 }
 #[derive(Clone)]
 pub struct IdentContext<'src, 'f> {
    fresh: &'f FreshCtx,
    // The number of lambdas we've entered
    depth: u32,
-   lookup: HashMap<&'src str, Ident>,
+   lookup: HashMap<&'src str, InternalIdentDoNotUse>,
 }
 impl <'src, 'f> IdentContext<'src, 'f> {
    fn new(fresh: &'f FreshCtx) -> Self {
@@ -430,7 +475,7 @@ impl <'src, 'f> IdentContext<'src, 'f> {
       IdentContext {
          fresh: self.fresh,
          depth: self.depth + 1,
-         lookup: self.lookup.update(name, Ident::BVarReverse(self.depth)),
+         lookup: self.lookup.update(name, InternalIdentDoNotUse::BVarReverse(self.depth)),
       }
    }
 
@@ -446,7 +491,7 @@ impl <'src, 'f> IdentContext<'src, 'f> {
       IdentContext {
          fresh: self.fresh,
          depth: self.depth,
-         lookup: self.lookup.update(name, Ident::FVar(self.fresh.fvar()))
+         lookup: self.lookup.update(name, InternalIdentDoNotUse::FVar(self.fresh.fvar()))
       }
    }
 
@@ -454,12 +499,13 @@ impl <'src, 'f> IdentContext<'src, 'f> {
       Expr::MVar(self.fresh.mvar())
    }
 
-   pub fn get<'src2, 'f2>(&self, name: &'src str) -> Option<Expr<'src2, 'f2>> {
+   pub fn get(&self, name: &'src str) -> Option<BoundIdent> {
       self.lookup.get(name).map(|x|
          match x.clone() {
-            Ident::FVar(id) => Expr::FVar(id),
-            Ident::BVarReverse(rev_id) => Expr::BVar(
-               BVarId(self.depth - rev_id)
+            InternalIdentDoNotUse::FVar(id) => BoundIdent::FVar(id),
+            InternalIdentDoNotUse::BVarReverse(rev_id) => BoundIdent::BVar(
+               // Minus one because they start at 1
+               BVarId(self.depth - rev_id - 1)
             ),
          }
       )
@@ -498,13 +544,26 @@ impl <'src, 'f> TypeContext<'src, 'f> {
          _ => todo!(),
       }
    }
-   pub fn query(e: Expr<'src, 'f>) {
-      match e {
-         Expr::BVar(bvar_id) => todo!(),
-         Expr::FVar(fvar_id) => todo!(),
-         Expr::MVar(_) =>
-            unimplemented!("Querying the type context for metavariables may be supported"),
-         _ => unimplemented!("Only query the type context for idents currently!")
+
+   pub fn query_bvar_type(&self, id: BVarId) -> &'f Expr2<'src, 'f> {
+      use TypeContext::*;
+      match self {
+         Flat(v) => {
+            for fact in v {
+               match fact.expr {
+                  Expr::Eq { left, right } => {
+                     if let Expr::Typeof(x) = left.expr {
+                        if let Expr::BVar(id2) = x.expr && id == *id2 {
+                           return right;
+                        }
+                     }
+                  }
+                  _ => ()
+               }
+            }
+            panic!("Could not compute type for {:?}", id);
+         }
+         _ => todo!(),
       }
    }
 }
