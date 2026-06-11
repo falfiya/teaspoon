@@ -9,6 +9,9 @@ Static type systems for programming languages provide stronger guarantees of pro
 #import "@preview/simplebnf:0.2.0": *
 #show math.equation: set text(fill: blue, weight: "bold")
 
+#set page(fill: rgb("#f8efe7"))
+
+
 #table(
   columns: (auto, auto),
   stroke: none,
@@ -164,6 +167,7 @@ Static type systems for programming languages provide stronger guarantees of pro
   [Premise 3],
   [Conclusion],
 ))
+
 
 == The difficulties of mutable variables
 

@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+   <title>My Counter</title>
+</head>
+<body>
+   <button id="btn">0</button>
+   <script>
+      const btn = document.getElementById("btn");
+      let counter = 0;
+      btn.onclick = () => {
+         counter = counter + 1;
+         btn.innerText = counter;
+      };
+   </script>
+</body>
+</html>
