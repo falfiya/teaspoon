@@ -278,6 +278,11 @@ pub enum Expr<'src, 'f> {
       sup: &'f Expr2<'src, 'f>,
    },
 
+   Liquid {
+      params: Vec<&'f Param<'src, 'f>>,
+      pred: &'f Expr2<'src, 'f>,
+   },
+
    Block(Vec<&'f Statement2<'src, 'f>>),
    // Binary {
    //    op: BinOp,
@@ -287,6 +292,9 @@ pub enum Expr<'src, 'f> {
    // ArrayT(Box<Expr<'src>>),
 }
 
+impl Expr<'_, '_> {
+   
+}
 
 #[derive(Copy, Clone)]
 pub struct MVarId(pub u32);
