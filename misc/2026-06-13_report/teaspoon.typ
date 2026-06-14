@@ -1,7 +1,9 @@
 #import "para-lipics/lib.typ": *
+#import "@preview/simplebnf:0.2.0": *
+#import "@preview/curryst:0.6.0": prooftree, rule, rule-set
 
 #show: para-lipics.with(
-  title: [Teaspoon: Liquid Types and More for TypeScript],
+  title: [Teaspoon:#h(-0.8pt) Liquid Types and More for TypeScript],
   authors: (
     (
       name: "Nicola Gannon",
@@ -16,7 +18,7 @@
       website: "https://kmill.github.io",
       orcid: "https://orcid.org/0000-0001-7400-5304",
       affiliations: "University of California, Santa Cruz, USA",
-    )
+    ),
   ),
   hide-lipics: true,
   hide-doi: true,
@@ -24,6 +26,7 @@
   keywords: "Liquid Types, Dependent Types, Interactive Theorem Proving",
   category: "Workshop Report",
   funding: "This material was supported by the juice purchased from the Baskin Engineering Perk on 2026-06-11",
+  event-short-title: "CSE 290Q",
   abstract: [
     Static type systems for programming languages provide stronger guarantees of program correctness through analysis at compile time. They typically eliminate all runtime type errors and enforce proper usage of APIs. The programmer can even lean on the type system to help her reason about the nature of her data. The benefits of static typing are best showcased in web development. JavaScript is the executable language of the web, but most #cite(<stateofjs>) web developers use TypeScript, a statically typed extension to JavaScript. TypeScript is a compiler-as-specification, which works remarkably well in practice, but a robust theory would prevent soundness bugs. Teaspoon aims to do what TypeScript did for JavaScript. It extends a subset of TypeScript, formally backing it with the usual operational semantics, type inference, and constraint solving. Teaspoon's type system is unusual in its support for mutability and imperative programming. The addition of first-class propositions and liquid types effectively create a dependently typed TypeScript.
   ],
@@ -61,25 +64,249 @@ if (a) {
 }
 ```
 
-== Core Syntax
+= Elaboration
+
+#let b(content, color) = [
+   #show math.equation: set text(fill: color, weight: "bold")
+   #eval(content, mode: "math")
+   #show math.equation: set text(fill: black, weight: "regular")
+]
+
+#let many(content) = [
+   #show math.equation: set text(fill: fuchsia, weight: "bold")
+   #h(-3pt) $⸨$ #h(-2pt)
+   #show math.equation: set text(fill: black, weight: "regular")
+   #content
+   #show math.equation: set text(fill: fuchsia, weight: "bold")
+   #h(-2.1pt) $⸩$ #h(-3pt) $*$ #h(-3.5pt)
+]
+
+#let optional(content) = [
+   #show math.equation: set text(fill: fuchsia, weight: "bold")
+   $⸨$ #h(-2pt)
+   #show math.equation: set text(fill: black, weight: "regular")
+   #content
+   #show math.equation: set text(fill: fuchsia, weight: "bold")
+   #h(-2.1pt) $⸩?$
+]
+
+#let v = (
+   x: b("x", olive),
+   t: b("τ", blue),
+   e: b("e", blue),
+   m: [
+      `?` #h(-3pt) #b("m", olive)
+   ],
+   star: b("*", purple),
+   infer: `infer`,
+   b: b("b", blue),
+   bool: text("bool", olive, weight: "bold", style: "oblique"),
+   number: text("number", olive, weight: "bold", style: "oblique"),
+   string: text("string", olive, weight: "bold", style: "oblique"),
+   universe: text("u", olive, weight: "bold", style: "oblique"),
+   one: [#h(-2pt) #b("₁", blue)],
+   two: [#h(-2pt) #b("₂", blue)],
+   prime: [#h(-4pt) #b("'", blue)],
+   tactics: text("tactics", olive, weight: "bold", style: "oblique"),
+   statement: b("s", blue),
+   statements: [
+      #show math.equation: set text(fill: blue, weight: "bold")
+      $overline(s)$
+      #show math.equation: set text(fill: black, weight: "regular")
+   ],
+   prim: b("p", blue),
+   prop: b("φ", blue),
+   // value: b("e", maroon),
+)
+
+#let c = (
+   t: [#h(-2pt) `:`],
+   fresh: text("fresh", olive, weight: "bold"),
+   semi: [#h(-3pt) `;` #h(-1pt)],
+)
+
+#let mvar = [$?$ #h(-1pt) $m$]
+
+#let D(content) = [$⟦$ #content $⟧$]
+
+#let elet = prooftree(rule(
+   name: [E-LetDec],
+   [#D[`let` #v.x #c.semi $𝓟$] $▹⟦𝓟⟧$],
+))
+
+#let elet2 = prooftree(rule(
+   name: [E-LetDecT],
+   [#D[#v.e] $▹$ #v.e#v.prime],
+   [#D[`let` #v.x #c.t #v.e #c.semi $𝓟$] $ ▹$ `let` #v.x #c.t #v.e#v.prime #c.semi $⟦𝓟⟧$],
+))
+
+#let elet3 = prooftree(rule(
+   name: [E-LetDef],
+   [#D[#v.e] $▹$ #v.e#v.prime],
+   [#c.fresh #v.m],
+   [#D[`let` #v.x `=` #v.e #c.semi $𝓟$] $ ▹$ `let` #v.x #c.t #v.m #c.semi #v.x `=` #v.e#v.prime $⟦𝓟⟧$],
+))
+
+#let elam = prooftree(rule(
+   name: [E-Lam1],
+   [#D[#v.e] $▹$ #v.e#v.prime],
+   [#c.fresh #v.m],
+   [#D[#v.x `=>` #v.e] $ ▹$ `(`#v.x #c.t #v.m `)` `=>` #v.e#v.prime],
+))
+
+#figure(caption: [Elaboration Rules])[
+   #align(center, rule-set(
+      elet,
+      elet2,
+      elet3,
+      elam,
+      // oec,
+      // abstraction,
+   ))
+]<elaboration-rules>
+
+The primary function of elaboration is to translate the input syntax (#ref(<input-syntax>)) to the core syntax. It does this by creating metavariables.
+Unlike Lean 4, Teaspoon's elaboration is not type directed so the elaboration rules can be presented separately from the type inference.
+#ref(<elaboration-rules>)
+includes some of the more interesting elaboration rules.
 
 
 
-== Operational Semantics
+#figure(caption: [Core Syntax])[
+   #table(
+      columns: (auto, auto),
+      stroke: none,
+      inset: (left: 5pt),
 
-#import "@preview/simplebnf:0.2.0": *
+      bnf(
+         
+         Prod(
+            v.e,
+            delim: $→$,
+            {
+               Or[`                   `][expr]
+               Or[#v.bool][]
+               Or[#v.number][]
+               Or[#v.string][]
+               Or[`undefined`][]
+               Or[#v.x][var]
+               Or[#v.m][mvar]
+               Or[`sorry`][]
+               Or[
+                  #optional[#v.infer] \
+                  `(`#many[#v.x #c.t #v.e #h(-3pt) `,` #h(-2pt) ]`)` `=>` #v.e#v.prime
+               ][lambda]
+               // Or[`[` $e$`;`$*$ `]`][array]
+               Or[#v.e`(`#many[#v.e#v.prime]`)`][call]
+               Or[`@`#v.e][unimplicit]
+               Or[`(`#v.e`)`][sub-expr]
+               Or[`with` #v.tactics][tactics]
+               Or[#v.e#v.one `|` #v.e#v.two][bar]
+               Or[#v.e#v.one `&` #v.e#v.two][and]
+               Or[`!`#h(-4pt)#v.e][logical not]
+               Or[#v.prop][]
+               Or[#v.t][]
+            },
+         ),
 
-== Elaboration
+         Prod(
+            v.prop,
+            delim: $→$,
+            {
+               Or[][propish]
+               Or[#v.e#v.one `===` #v.e#v.two][object eq]
+               Or[#v.e#v.one `@==` #v.e#v.two][prop eq]
+               Or[#v.e#v.one `extends` #v.e#v.two][subtype]
+            }
+         ),
+      ),
+      bnf(
+         Prod(
+            v.t,
+            delim: $→$,
+            {
+               Or[`                 `][typeish]
+               Or[`Sort` #v.universe][]
+               Or[`True`][true type]
+               Or[`False`][false type]
+               Or[`typeof` #v.e][]
+               Or[`Liquid` \
+               `(`#many[#v.x #c.t #v.e]`),` #v.e#v.prime][liquid type]
+            }
+         ),
 
+         Prod(
+            v.statement,
+            delim: $→$,
+            {
+               Or[][statement]
+               Or[`let` #v.x #c.t #v.e][var]
+               Or[`const` #v.x #c.t #v.e `=` #v.e][constant]
+               Or[
+                  `if (` #v.e `)` #v.b#v.one \
+                  `else   ` #h(1.4pt) #v.b#v.two
+                  ][if]
+               Or[`loop` #v.b][]
+               Or[`break`][]
+               Or[`return` #v.e][]
+               Or[#v.x `=` #v.e][assign]
+               Or[`#check` #v.e][]
+               Or[`#eval` #v.e][]
+            },
+         ),
 
-== Elaboration
+         Prod(
+            v.b,
+            delim: $→$,
+            {
+               Or[`{` #many[#v.statement #c.semi ] `}`][block]
+            }
+         )
+      ),
+   )
+]<core-syntax>
 
-For simplicity the elaboration rules will be presented separate from the type inference rules.
-In the implementation, elaboration and type inference are the same module.
-Unlike Lean 4, Teaspoon's elaboration is not type directed.
-The primary function of elaboration is to fill in implicit type arguments with metavariables.
+#let cconst = `const`
+#let ceq = `=`
+#let lam = `=>`;
 
-#import "@preview/curryst:0.6.0": rule, prooftree, rule-set
+#let oassign = prooftree(
+   rule(
+      name: [O-Assign],
+      [$⟨$ $σ,$ #v.e$⟩⇓⟨$ $σ',$ #v.e#v.prime $⟩$],
+      [
+         $⟨$ $σ,$ #v.x `=` #v.e #c.semi
+         #many[#v.statements #c.semi]
+         $⟩⇓⟨$
+         $σ'[$ #v.x $∖$ #v.e#v.prime $],$ #v.statements $⟩$],
+   )
+)
+
+#let ocall = prooftree(
+   rule(
+      name: [O-Call],
+      [$⟨$ $σ,$ #v.e$⟩⇓⟨$ $σ',$ #v.e#v.prime $⟩$],
+      [
+         $⟨$ $σ,$ #v.x `=` #v.e #c.semi
+         #many[#v.statements #c.semi]
+         $⟩⇓⟨$
+         $σ'[$ #v.x $∖$ #v.e#v.prime $],$ #v.statements $⟩$],
+   )
+)
+
+#let abstraction = prooftree(rule(
+  name: [Abstraction],
+  $Gamma, x: A tack P : B$,
+  $Gamma tack lambda x . P : A => B$,
+))
+
+#figure(caption: [Big Step Operational Semantics])[
+   #align(center, rule-set(
+      oassign,
+      ocall,
+      abstraction,
+   ))
+]
 
 #let var = $x$
 
@@ -89,29 +316,19 @@ The primary function of elaboration is to fill in implicit type arguments with m
 #let ceq = `=`
 #let lam = `=>`;
 
-#let mvar = [$?$ #h(-1pt) $m$]
-#let ascribe = [#h(-2pt) `:` #h(2pt)]
+// #prooftree(rule(
+//   name: [E-Const],
+//   $Γ ⊢ e ▹ e'$,
+//   $"fresh " #mvar$,
+//   $Γ ⊢ (#cconst x #ceq e) ▹ (#cconst x#ascribe #mvar #ceq e')$,
+// ))
 
-#prooftree(rule(
-  name: [E-Const],
-  $Γ ⊢ e ▹ e'$,
-  $"fresh " #mvar$,
-  $Γ ⊢ (#cconst x #ceq e) ▹ (#cconst x#ascribe #mvar #ceq e')$,
-))
-
-#prooftree(rule(
-  name: [E-Const],
-  $Γ ⊢ e ▹ e'$,
-  $"fresh " #mvar$,
-  $Γ ⊢ (#cconst x #ceq e) ▹ (#cconst x#ascribe #mvar #ceq e')$,
-))
-
-#prooftree(rule(
-  name: [E-Lam],
-  [$Γ ⊢ e ▹ e',C$],
-  [$"fresh " #mvar$],
-  [$Γ ⊢ (x #lam e) ▹ ((x#ascribe #mvar)#lam e')$],
-))
+// #prooftree(rule(
+//   name: [E-Lam],
+//   [$Γ ⊢ e ▹ e',C$],
+//   [$"fresh " #mvar$],
+//   [$Γ ⊢ (x #lam e) ▹ ((x#ascribe #mvar)#lam e')$],
+// ))
 
 
 
@@ -128,177 +345,123 @@ There's something similar about how you can't "keep" information between functio
 
 == Querying for Type
 
+= Future Work
+
 
 #bibliography("bibliography.bib")
 
 = Appendix
 
-#pagebreak()
+#counter(heading).update(1)
+#counter(figure.where(kind: image)).update(0)
+#counter(figure.where(kind: table)).update(0)
+#counter(figure.where(kind: raw)).update(0)
 
-== Input Language
+#set figure(numbering: n => {
+   let hdr = counter(heading).get()
+   // Replace 'hdr.first()' by '..hdr' to display
+   // all heading levels
+   [appx.#numbering("1.1", hdr.first(), n)]
+})
 
+#figure(caption: [Input Syntax])[
+   #table(
+      columns: (auto, auto),
+      stroke: none,
+      inset: (left: 5pt),
 
-#let b(content, color) = [
-   #show math.equation: set text(fill: color, weight: "bold")
-   #eval(content, mode: "math")
-   #show math.equation: set text(fill: black, weight: "regular")
-]
+      bnf(
+         
+         Prod(
+            v.e,
+            delim: $→$,
+            {
+               Or[`                   `][]
+               Or[#v.bool][]
+               Or[#v.number][]
+               Or[#v.string][]
+               Or[`undefined`][]
+               Or[#v.x][]
+               Or[#v.m][]
+               Or[`sorry`][]
+               Or[`_`][]
+               Or[
+                  #optional[#v.infer] \
+                  `(`#many[#v.x #c.t #v.e #h(-3pt) `,` #h(-2pt) ]`)` `=>` #v.e#v.prime
+               ][]
+               // Or[`[` $e$`;`$*$ `]`][array]
+               Or[#v.e`(`#many[#v.e#v.prime]`)`][]
+               Or[`@`#v.e][]
+               Or[`(`#v.e`)`][]
+               Or[`with` #v.tactics][]
+               Or[#v.e#v.one `|` #v.e#v.two][]
+               Or[#v.e#v.one `&` #v.e#v.two][]
+               Or[`!`#h(-4pt)#v.e][]
+               Or[#v.prop][]
+               Or[#v.t][]
+            },
+         ),
 
-#let v = (
-   x: b("x", blue),
-   τ: b("τ", blue),
-   star: b("*", purple),
-)
+         Prod(
+            v.prop,
+            delim: $→$,
+            {
+               Or[][]
+               Or[#v.e#v.one `===` #v.e#v.two][]
+               Or[#v.e#v.one `@==` #v.e#v.two][]
+               Or[#v.e#v.one `extends` #v.e#v.two][]
+               Or[#v.e#v.one `satisfies` #v.e#v.one][]
+            }
+         ),
+      ),
+      bnf(
+         Prod(
+            v.t,
+            delim: $→$,
+            {
+               Or[`                 `][]
+               Or[`Prop`][]
+               Or[`Type`][]
+               Or[`Sort` #v.universe][]
+               Or[`Type` #v.universe][]
+               Or[`True`][]
+               Or[`False`][]
+               Or[`typeof` #v.e][]
+               Or[`Liquid (`#many[#v.x #c.t #v.e]`),` #v.e#v.prime][]
+            }
+         ),
 
-#table(
-  columns: (auto, auto),
-  stroke: none,
-  inset: (left: 5pt),
+         Prod(
+            v.statement,
+            delim: $→$,
+            {
+               Or[][]
+               Or[`let` #v.x #c.t #v.e][]
+               Or[`const` #v.x #c.t #v.e `=` #v.e][]
+               Or[
+                  `if (` #v.e `)` #v.b
+               ][]
+               Or[
+                  `if (` #v.e `)` #v.b#v.one \
+                  `else   ` #h(1.4pt) #v.b#v.two
+               ][]
+               Or[`loop` #v.b][]
+               Or[`break`][]
+               Or[`return`][]
+               Or[`return` #v.e][]
+               Or[#v.x `=` #v.e][]
+               Or[`#check` #v.e][]
+               Or[`#eval` #v.e][]
+            },
+         ),
 
-  bnf(
-    Prod(
-      $v$,
-      delim: $→$,
-      {
-        Or[#v.x][ident]
-        Or[#v.x #ascribe #v.τ][type ascripted ident]
-        Or[`_ :` $τ$][ignored]
-      }
-    ),
-
-    Prod(
-      $p$,
-      delim: $→$,
-      {
-        Or[$x$][single parameter]
-        Or[`(`$v$`,`$*$`)`][]
-      }
-    ),
-
-    Prod(
-      $s$,
-      delim: $→$,
-      {
-        Or[`let` $v$][undefined]
-        Or[`let` $v$ `=` $e$][var]
-        Or[`const` $v$ `=` $e$][constant]
-        Or[`if (` $e$ `) {` $s$`;`$*$ `}`][if]
-        Or[
-            `if (` $e$ `) {` $s$`;`$*$ `}`\
-            `else    `#h(1.2pt)`{` $s$`;`$*$ `}`][if else]
-        Or[`loop {` $s$`;`$*$ `}`][]
-        Or[`break`][break innermost loop]
-        Or[`return`][]
-        Or[`#check` e][check type]
-        Or[`#eval`][application]
-      },
-    ),
-
-    Prod(
-      $e$,
-      delim: $→$,
-      {
-        Or[`b`][boolean]
-        Or[`n`][number]
-        Or[`s`][string]
-        Or[`undefined`][]
-        Or[`sorry`][]
-        Or[$x$][ident]
-        Or[`infer`$?$ $p$` => `$l$][lambda]
-        Or[`[` $e$`;`$*$ `]`][array]
-        Or[`!`$e$][logical not]
-        Or[$e$`(` $e$`,`$*$ `)` $T?$][function call]
-        Or[`@`$e$][unimplicit]
-        Or[`(`$e$`)`][sub-expression]
-        Or[$T$][tactics]
-      }
-    ),
-  ),
-  bnf(
-    Prod(
-      $v_τ$,
-      delim: $→$,
-      {
-        Or[$τ$][]
-        Or[$x$ `:` $τ$][dependent]
-      }
-    ),
-
-    Prod(
-      $p_τ$,
-      delim: $→$,
-      {
-        Or[$τ$][]
-        Or[`(`$v_τ$`,`$*$`)`][]
-      }
-    ),
-
-    Prod(
-      $v_l$,
-      delim: $→$,
-      {
-        Or[$x$][]
-        Or[`(`$x$ `:` $τ$`)`][]
-      }
-    ),
-
-    Prod(
-      $τ$,
-      delim: $→$,
-      {
-        Or[`Sort` $n$][sort]
-        Or[`Type` $n$][type]
-        Or[`Type`][type 0]
-        Or[`Prop`][type of propositions]
-        Or[$φ$][proposition]
-        Or[$x$][type ident]
-        Or[$e$][singleton type]
-        Or[`typeof` $e$][]
-        Or[`infer`$?$ $p_τ$ `-> `$τ$][π-type]
-        Or[$τ$`[]`][array type]
-        Or[`[`$v_τ$`;`$*$`]`][named tuple]
-        Or[`Liquid` $v_l$`, `$φ$][liquid type]
-      },
-    ),
-
-    Prod(
-      $φ$,
-      delim: $→$,
-      {
-        Or[`True`][]
-        Or[`False`][]
-        Or[$e₁$` @== `$e₂$][equality]
-        Or[$e₁$` | `$e₂$][or]
-        Or[$e₁$` & `$e₂$][and]
-        Or[`infer`$?$ $p_τ$ `->` $φ$][forall]
-        Or[$τ₁$` extends `$τ₂$][subtype relation]
-      },
-    ),
-
-    Prod(
-      $T$,
-      delim: $→$,
-      {
-        Or[`with` $t$`;`$*$][tactics]
-      }
-    ),
-
-    Prod(
-      $"t"$,
-      delim: $→$,
-      {
-        Or[$x$ $e *$][tactic]
-      }
-    )
-  )
-)
-
-
-#prooftree(rule(
-  label: [Label],
-  name: [Rule name],
-  [Premise 1],
-  [Premise 2],
-  [Premise 3],
-  [Conclusion],
-))
+         Prod(
+            v.b,
+            delim: $→$,
+            {
+               Or[`{` #many[#v.statement #c.semi ] `}`][]
+            }
+         )
+      ),
+   )
+]<input-syntax>

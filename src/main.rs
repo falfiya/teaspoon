@@ -1,4 +1,4 @@
-#![feature(allocator_api)]
+// #![feature(allocator_api)]
 // #![feature(impl_trait_in_bindings)]
 // #![feature(coroutines, coroutine_trait, stmt_expr_attributes)]
 
